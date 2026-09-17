@@ -1,0 +1,30 @@
+{
+  "name": "veritek-crm",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Manufacturing sales & order CRM: lead to quotation, production, dispatch, payment, service and repeat business",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.js",
+    "dev:server": "node --watch --no-warnings=ExperimentalWarning server/index.js",
+    "dev:client": "vite --config client/vite.config.js",
+    "build": "vite build --config client/vite.config.js",
+    "start": "node --no-warnings=ExperimentalWarning server/index.js",
+    "seed": "node --no-warnings=ExperimentalWarning server/seed.js --reset",
+    "test": "node --no-warnings=ExperimentalWarning tests/run.mjs",
+    "snapshot": "node --no-warnings=ExperimentalWarning scripts/snapshot.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-router-dom": "^7.8.0",
+    "vite": "^7.1.0"
+  }
+}
