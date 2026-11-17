@@ -1,7 +1,12 @@
-// End-to-end journey through the HTTP API: lead → quote → approval → PO → production → dispatch → payment → service.
+// End-to-end acceptance journey through the HTTP API, one step per spec requirement:
+// customer → enquiry & pipeline → quotation (configurator, discount approval, revision) → customer portal →
+// conversion to an order → advance → production & QC → planned and partial dispatch → invoice & receipt with
+// TDS → complaint → customer tracking, timeline, QR scan page and role/scope checks.
 const BASE = process.env.API || 'http://localhost:4399/api';
 let failures = 0;
+let checks = 0;
 const log = (ok, msg, extra = '') => {
+  checks++;
   if (!ok) failures++;
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${msg}${extra ? ` — ${extra}` : ''}`);
 };
@@ -10,216 +15,279 @@ async function login(email) {
   const r = await fetch(`${BASE}/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password: 'Veritek@123' }) });
   const b = await r.json();
   if (!b.token) throw new Error(`login failed for ${email}: ${b.error}`);
-  const call = async (path, opts = {}) => {
-    const res = await fetch(BASE + path, { method: opts.method || 'GET', headers: { 'content-type': 'application/json', authorization: `Bearer ${b.token}` }, body: opts.body ? JSON.stringify(opts.body) : undefined });
+  const call = async (path, { method = 'GET', body, key } = {}) => {
+    const headers = { authorization: `Bearer ${b.token}` };
+    if (body !== undefined) headers['content-type'] = 'application/json';
+    if (key) headers['idempotency-key'] = key;
+    const res = await fetch(BASE + path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
     let data;
     try { data = await res.json(); } catch { data = null; }
     return { status: res.status, data };
   };
-  return { user: b.user, get: (p) => call(p), post: (p, body) => call(p, { method: 'POST', body }), put: (p, body) => call(p, { method: 'PUT', body }) };
+  return {
+    user: b.user,
+    get: (p) => call(p),
+    post: (p, body, key) => call(p, { method: 'POST', body: body ?? {}, key }),
+    put: (p, body) => call(p, { method: 'PUT', body: body ?? {} }),
+  };
 }
 const anon = async (path, opts = {}) => {
   const res = await fetch(BASE + path, { method: opts.method || 'GET', headers: { 'content-type': 'application/json' }, body: opts.body ? JSON.stringify(opts.body) : undefined });
   return { status: res.status, data: await res.json().catch(() => null) };
 };
+const hasKey = (obj, re) => JSON.stringify(obj).match(re) !== null;
 
-const today = new Date().toISOString().slice(0, 10);
-const addDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
-
-const exec = await login('rohan@veritek.example');       // Sales executive, West
-const rm = await login('rsm.west@veritek.example');      // Regional manager
-const head = await login('saleshead@veritek.example');
-const commercial = await login('commercial@veritek.example');
+const admin = await login('admin@veritek.example');
+const meta = (await admin.get('/meta')).data;
+const today = meta.today;
+const addDays = (n) => {
+  const d = new Date(`${today}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+const exec = await login('saurav@veritek.example'); // Sales executive, West
+const otherExec = await login('kavya@veritek.example'); // Sales / export executive, Export region
+const rm = await login('rsm.west@veritek.example'); // Regional sales manager, West
+const coord = await login('coordinator@veritek.example');
 const production = await login('production@veritek.example');
 const quality = await login('quality@veritek.example');
 const dispatch = await login('dispatch@veritek.example');
 const accounts = await login('accounts@veritek.example');
 const service = await login('service@veritek.example');
-
-// ---------------------------------------------------------------- 1. lead
+const viewer = await login('viewer@veritek.example');
 const stamp = Date.now().toString().slice(-6);
-const leadRes = await exec.post('/leads', {
-  title: `APFC panels for new plant ${stamp}`,
-  new_customer: { name: `Journey Test Industries ${stamp}`, customer_type: 'direct', industry: 'Automotive', city: 'Pune', state: 'Maharashtra', region_id: 1, contact_name: 'Anil Deshpande', designation: 'Purchase Manager', phone: '+91 9800000001', email: 'anil@journeytest.example', billing_address: 'Plot 9, MIDC, Pune' },
-  requirement: 'APFC panel with thyristor switching for a new press shop',
-  source: 'referral', temperature: 'hot', estimated_value: 900000, expected_close_date: addDays(30),
-  next_action: 'Site visit to check load pattern', next_follow_up_date: today, tags: ['Urgent Requirement'],
+const west = meta.regions.find((r) => r.name === 'West');
+const unit1 = meta.factories[0];
+
+// ---------------------------------------------------------------- 1. customer master & region
+const cust = await exec.post('/customers', {
+  company_name: `Journey Test Industries ${stamp}`, country_code: 'IN', city: 'Pune', state: 'Maharashtra', industry: 'Automotive', value_category: 'high_value',
+  tags: ['Journey'], interests: [meta.categories[0].id], billing_address: 'Plot 9, MIDC Bhosari, Pune', payment_terms: '30% advance, balance 30 days',
+  contacts: [{ name: 'Anil Deshpande', role: 'Purchase Manager', phone: `+91 98${stamp}11`, email: `anil${stamp}@journeytest.example` }], confirm_not_duplicate: true,
 });
-log(leadRes.status === 201, 'sales executive creates a lead with a new company', leadRes.data?.error);
-const leadId = leadRes.data.id;
-const lead = (await exec.get(`/leads/${leadId}`)).data;
-log(lead.assigned_to === exec.user.id, 'lead auto-assigned to the creating executive');
-log(lead.followups.some((f) => f.status === 'pending' && f.due_date === today), 'follow-up task created automatically');
+log(cust.status === 201, 'sales executive creates a customer with master fields', cust.data?.error);
+const customerId = cust.data.id;
+const profile = (await exec.get(`/customers/${customerId}`)).data;
+log(profile.customer.region_id === west.id, 'region inferred from the state (Maharashtra → West)', profile.customer.region_name);
+log(profile.customer.owner_id === exec.user.id, 'the creating executive owns the customer');
+log(profile.customer.tags.some((t) => t.name === 'Journey') && profile.customer.interests.length === 1, 'tags and product interests saved');
+const contactId = profile.contacts[0].id;
+const dup = await exec.post('/customers', { company_name: `Journey Test Industries ${stamp}`, country_code: 'IN', contacts: [{ phone: `+91 98${stamp}11` }] });
+log(dup.status === 409 && dup.data?.details?.code === 'possible_duplicate', 'a duplicate company is flagged before it is created');
 
-// activity + stage moves
-const act = await exec.post('/activities', { lead_id: leadId, type: 'meeting', summary: 'Visited site, measured load', customer_response: 'Wants thyristor switching', next_action: 'Share technical proposal', follow_up_date: addDays(2) });
-log(act.status === 201, 'log a site meeting against the lead', act.data?.error);
-const noNext = await exec.post('/activities', { lead_id: leadId, type: 'call', summary: 'Quick call' });
-log(noNext.status === 400, 'API refuses an interaction on an open lead without a next action');
-await exec.post(`/leads/${leadId}/move`, { stage: 'technical_discussion', next_action: 'Prepare quotation', next_follow_up_date: addDays(1) });
-const afterMove = (await exec.get(`/leads/${leadId}`)).data;
-log(afterMove.stage === 'technical_discussion' && afterMove.followups.find((f) => f.status === 'pending')?.due_date === addDays(1), 'stage move updates the pending follow-up');
+// ---------------------------------------------------------------- 2. enquiry, opportunity & pipeline
+const allProducts = (await admin.get('/products?status=active')).data;
+let pick = null;
+for (const p of allProducts.filter((x) => x.option_count > 0 && x.price_currency === 'INR' && x.standard_price_minor && x.cost_price_minor)) {
+  const detail = (await admin.get(`/products/${p.id}`)).data;
+  for (const o of detail.options.filter((x) => x.active && x.price_delta_minor >= 0)) {
+    const list = p.standard_price_minor + o.price_delta_minor;
+    const cost = p.cost_price_minor + o.cost_delta_minor;
+    const net = Math.round(list * 0.88);
+    const minRatio = (p.min_price_minor || 0) / p.standard_price_minor;
+    const min = p.min_price_minor ? Math.round(p.min_price_minor + o.price_delta_minor * minRatio) : 0;
+    if ((net - cost) / net > 0.25 && net >= min) {
+      pick = { p, o, list };
+      break;
+    }
+  }
+  if (pick) break;
+}
+log(Boolean(pick), 'found a catalogue product with a configurator option', pick ? `${pick.p.code} + ${pick.o.name}` : 'none');
+const enq = await exec.post('/enquiries', {
+  customer_id: customerId, contact_id: contactId, lines: [{ product_id: pick.p.id, qty: 10, unit: pick.p.default_unit || 'pcs' }], source_code: 'website',
+  owner_id: exec.user.id, next: { purpose: 'Respond to enquiry', owner_id: exec.user.id, due_date: today },
+}, `journey-enq-${stamp}`);
+log(enq.status === 201, 'enquiry captured with a product, source and next action', enq.data?.error);
+const enquiryId = enq.data.id;
+const enquiry = (await exec.get(`/enquiries/${enquiryId}`)).data;
+log(enquiry.enquiry.stage === 'new' && enquiry.tasks.some((t) => t.status === 'open' && t.due_date === today), 'new enquiry has an open follow-up due today');
+const opp = await exec.put(`/enquiries/${enquiryId}`, { version: enquiry.enquiry.version, est_value: '150000', est_currency: 'INR', probability: 40, temperature: 'hot', expected_decision_date: addDays(20) });
+log(opp.status === 200, 'opportunity value, probability, temperature and decision date saved', opp.data?.error);
+const board = (await exec.get('/enquiries/pipeline')).data;
+const card = board.columns.flatMap((c) => c.cards).find((c) => c.id === enquiryId);
+log(card && card.value_minor === 15000000 && card.weighted_minor === 6000000, 'pipeline shows the estimate weighted by probability', card ? `${card.value_minor}/${card.weighted_minor}` : 'missing');
 
-// ---------------------------------------------------------------- 2. quotation with a discount that needs approval
-const products = (await exec.get('/products?active=1')).data;
-const panel = products.find((p) => p.sku === 'VT-APFC');
-const comm = products.find((p) => p.sku === 'VT-COMM');
-const panelDetail = (await exec.get(`/products/${panel.id}`)).data;
-const thyristor = panelDetail.options.find((o) => o.name.startsWith('Thyristor'));
-const items = [
-  { product_id: panel.id, option_ids: [thyristor.id], qty: 2, discount_pct: 14 },
-  { product_id: comm.id, qty: 4, discount_pct: 0 },
-];
-const preview = (await exec.post('/quotations/preview', { customer_id: lead.customer_id, items, freight: 12000 })).data;
-log(preview.approval_role === 'regional_manager', 'a 14% discount needs regional manager approval', preview.approval_role);
-log(preview.lines[0].list_price === panel.standard_price + thyristor.price_delta, 'configurator option is priced from the master');
-
-const qRes = await exec.post('/quotations', { customer_id: lead.customer_id, lead_id: leadId, contact_id: lead.contact_id, subject: 'APFC panels', items, freight: 12000 });
-log(qRes.status === 201, 'create quotation', qRes.data?.error);
-const qid = qRes.data.id;
-const submit = await exec.post(`/quotations/${qid}/submit`);
-log(submit.data.status === 'approval_pending', 'submitting routes it for approval');
-const sendEarly = await exec.post(`/quotations/${qid}/send`, {});
-log(sendEarly.status === 400, 'cannot send a quotation that is awaiting approval');
-const selfApprove = await exec.get('/approvals');
-log(selfApprove.data.every((a) => !a.can_decide), 'the executive cannot approve their own quotation');
-const pending = (await rm.get('/approvals')).data.find((a) => a.quotation_id === qid);
-log(Boolean(pending?.can_decide), 'regional manager sees it in the approval queue');
+// ---------------------------------------------------------------- 3. quotation: configurator, discount, approval
+const lines = [{ product_id: pick.p.id, option_ids: [pick.o.id], qty: 10, discount_pct: 12 }];
+const preview = (await exec.post('/quotations/preview', { customer_id: customerId, lines, freight: '1200' })).data;
+log(preview.approval_role === 'regional_manager', 'a 12% discount needs regional manager approval', `${preview.approval_role} — ${preview.approval_reasons?.join('; ')}`);
+log(preview.lines[0].list_price_minor === pick.list, 'configurator option is priced from the product master');
+log(preview.lines[0].cost_price_minor === undefined && preview.totals.margin_pct === undefined, 'cost and margin are hidden from a sales executive');
+const adminPreview = (await admin.post('/quotations/preview', { customer_id: customerId, lines })).data;
+log(typeof adminPreview.totals.margin_pct === 'number', 'management sees the margin', String(adminPreview.totals.margin_pct));
+const qRes = await exec.post('/quotations', { enquiry_id: enquiryId, contact_id: contactId, subject: 'Panel meters for the new press shop', lines, freight: '1200' }, `journey-q-${stamp}`);
+log(qRes.status === 201, 'quotation created against the enquiry', qRes.data?.error);
+const qid = qRes.data.quotation_id;
+const rid = qRes.data.revision_id;
+const sendNow = () => ({ sent_at: new Date().toISOString(), channel: 'email', summary: 'Quotation emailed to the purchase manager', validity_date: addDays(20), next: { purpose: 'Follow up quotation', owner_id: exec.user.id, due_date: addDays(2) } });
+const early = await exec.post(`/quote-revisions/${rid}/issue`, sendNow());
+log(early.status === 409 && early.data?.details?.code === 'approval_required', 'a quotation needing approval cannot be issued yet');
+const sub = await exec.post(`/quote-revisions/${rid}/submit`);
+log(sub.data?.approval_status === 'pending', 'submitting routes it for approval', sub.data?.error);
+log((await exec.get('/approvals')).data.every((a) => !a.can_decide), 'the executive cannot approve their own quotation');
+const pending = (await rm.get('/approvals')).data.find((a) => a.entity_id === rid);
+log(Boolean(pending?.can_decide), 'the West regional manager sees it in the approval queue');
+const rejectNoReason = await rm.post(`/approvals/${pending.id}/decide`, { decision: 'rejected' });
+log(rejectNoReason.status === 400, 'rejecting needs a reason');
 const decided = await rm.post(`/approvals/${pending.id}/decide`, { decision: 'approved', comments: 'Approved for the volume' });
 log(decided.status === 200, 'regional manager approves', decided.data?.error);
-const sent = await exec.post(`/quotations/${qid}/send`, { channel: 'email', valid_until: addDays(20) });
-log(sent.status === 200, 'quotation sent to the customer', sent.data?.error);
+const issued = await exec.post(`/quote-revisions/${rid}/issue`, sendNow());
+log(issued.status === 200, 'approved revision issued with sent time, channel and follow-up', issued.data?.error);
+const afterIssue = (await exec.get(`/enquiries/${enquiryId}`)).data;
+log(afterIssue.enquiry.stage === 'quote_sent', 'issuing moves the enquiry to “Quotation sent”');
+const editIssued = await exec.put(`/quote-revisions/${rid}`, { lines, version: 99 });
+log(editIssued.status === 409, 'an issued revision can no longer be edited');
 
-// ---------------------------------------------------------------- 3. customer portal
+// ---------------------------------------------------------------- 4. customer link: view, ask for a revision, accept
 const quote = (await exec.get(`/quotations/${qid}`)).data;
 const portal = await anon(`/public/quotations/${quote.public_token}`);
-log(portal.status === 200 && portal.data.totals.grand_total === quote.current.grand_total, 'customer opens the public quotation link');
-log(portal.data.items[0].cost_price === undefined, 'portal hides internal cost');
-const afterView = (await exec.get(`/quotations/${qid}`)).data;
-log(afterView.status === 'viewed' && afterView.viewed_at, 'opening the link marks the quotation viewed');
-const accept = await anon(`/public/quotations/${quote.public_token}/respond`, { method: 'POST', body: { action: 'accept', name: 'Anil Deshpande', message: 'Please proceed' } });
-log(accept.status === 200, 'customer accepts from the portal', accept.data?.error);
-log((await exec.get(`/quotations/${qid}`)).data.status === 'accepted', 'quotation status becomes accepted');
+log(portal.status === 200 && portal.data.totals.grand_total_minor === quote.current.grand_total_minor, 'customer opens the shared quotation link');
+log(!hasKey(portal.data, /cost_|margin|min_price/), 'the customer link never shows cost, margin or minimum price');
+log(Boolean((await exec.get(`/quotations/${qid}`)).data.current.viewed_at), 'opening the link records that the customer viewed it');
+const revise = await anon(`/public/quotations/${quote.public_token}/respond`, { method: 'POST', body: { action: 'revise', name: 'Anil Deshpande', note: 'Please check the price for 10 units' } });
+log(revise.status === 200, 'customer asks for a revision through the link', revise.data?.error);
+const rev2 = await exec.post(`/quotations/${qid}/revisions`, { change_note: 'Revised price after negotiation' });
+log(rev2.status === 201, 'a new draft revision is started from the issued one', rev2.data?.error);
+const rev2Detail = (await exec.get(`/quote-revisions/${rev2.data.revision_id}`)).data;
+const upd2 = await exec.put(`/quote-revisions/${rev2.data.revision_id}`, { version: rev2Detail.version, lines: [{ ...lines[0], discount_pct: 8 }], change_note: 'Revised price after negotiation' });
+log(upd2.status === 200 && upd2.data.approval_role === null, 'an 8% discount is within policy — no approval needed', upd2.data?.error);
+const issued2 = await exec.post(`/quote-revisions/${rev2.data.revision_id}/issue`, sendNow());
+log(issued2.status === 200, 'revision 2 issued', issued2.data?.error);
+const quote2 = (await exec.get(`/quotations/${qid}`)).data;
+log(quote2.revisions.find((r) => r.revision_no === 1)?.status === 'superseded' && quote2.revisions.length === 2, 'revision 1 is superseded but kept for comparison');
+const accept = await anon(`/public/quotations/${quote.public_token}/respond`, { method: 'POST', body: { action: 'accept', name: 'Anil Deshpande', note: 'PO to follow' } });
+log(accept.status === 200, 'customer accepts revision 2 online', accept.data?.error);
+const accepted = (await exec.get(`/quotations/${qid}`)).data;
+log(accepted.current.status === 'accepted', 'the accepted revision is marked accepted (not yet won)');
+log((await exec.get(`/enquiries/${enquiryId}`)).data.enquiry.stage !== 'won', 'accepted is not won until a confirmed order exists');
 
-// revision flow on a second quotation
-const q2 = (await exec.post('/quotations', { customer_id: lead.customer_id, items: [{ product_id: panel.id, qty: 1, discount_pct: 2 }] })).data;
-await exec.post(`/quotations/${q2.id}/submit`);
-await exec.post(`/quotations/${q2.id}/send`, {});
-const rev = await exec.put(`/quotations/${q2.id}`, { items: [{ product_id: panel.id, qty: 1, discount_pct: 9 }], change_note: 'Extra discount after negotiation' });
-log(rev.data.new_version === true && rev.data.version_no === 2, 'editing a sent quotation creates version 2');
-const versions = (await exec.get(`/quotations/${q2.id}`)).data.versions;
-log(versions.length === 2 && versions[1].grand_total > versions[0].grand_total, 'both versions are preserved for comparison');
+// ---------------------------------------------------------------- 5. conversion to an order (idempotent)
+const convertBody = {
+  lines: [{ index: 0, qty: 10, original_commitment_date: addDays(25) }], po_reference: `PO/JT/${stamp}`, po_date: today, received_date: today,
+  confirmation_type: 'po', confirm: true, advance_pct: 30, priority: 'high',
+};
+const convert = await exec.post(`/quote-revisions/${accepted.current.id}/convert`, convertBody, `journey-convert-${stamp}`);
+log(convert.status === 201 && convert.data.order_status === 'confirmed', 'accepted revision converted into a confirmed order', convert.data?.error);
+const again = await exec.post(`/quote-revisions/${accepted.current.id}/convert`, convertBody, `journey-convert-${stamp}`);
+log(again.data?.order_id === convert.data.order_id, 'a retried conversion returns the same order (no duplicate)');
+const orderId = convert.data.order_id;
+log((await exec.get(`/enquiries/${enquiryId}`)).data.enquiry.stage === 'won', 'the enquiry is won once the confirmed order covers the accepted scope');
+const order = (await coord.get(`/orders/${orderId}`)).data;
+log(order.order.priority === 'high' && order.order.advance_pct === 30 && order.order.advance_required_minor > 0, 'priority and advance carried into the order');
+const hdr = await coord.put(`/orders/${orderId}`, { version: order.order.version, factory_id: unit1.id, production_owner_id: meta.people.find((p) => p.role === 'production')?.id, reason: 'Planned in Unit 1' });
+log(hdr.status === 200, 'coordinator assigns the factory and production owner', hdr.data?.error);
 
-// ---------------------------------------------------------------- 4. order
-const convert = await commercial.post(`/quotations/${qid}/convert`, { customer_po_number: `PO/JT/${stamp}`, po_date: today, advance_pct: 40, priority: 'high', expected_delivery_date: addDays(25), win_reason: 'Technical superiority' });
-log(convert.status === 201, 'commercial converts the accepted quotation into a sales order', convert.data?.error);
-const orderId = convert.data.id;
-const order = (await commercial.get(`/orders/${orderId}`)).data;
-log(order.stage === 'po_received' && order.items.length === 2, 'order carries the quoted items');
-log((await exec.get(`/leads/${leadId}`)).data.status === 'won', 'linked lead is marked won');
+// ---------------------------------------------------------------- 6. advance
+const adv = await accounts.post(`/finance/orders/${orderId}/advances`, { amount: (order.order.advance_required_minor / 100).toFixed(2), effective_date: today, mode: 'rtgs', reference: `UTR${stamp}` });
+log(adv.status === 201, 'accounts records the advance against the order', adv.data?.error);
+log(!(await accounts.get('/finance/advances')).data.some((o) => o.id === orderId), 'the order leaves the pending-advance list');
 
-await commercial.post(`/orders/${orderId}/stage`, { stage: 'commercial_verification', note: 'PO checked' });
-const blocked = await commercial.post(`/orders/${orderId}/stage`, { stage: 'order_confirmed' });
-log(blocked.status === 400, 'cannot confirm the order before the advance is received', blocked.data?.error?.slice(0, 40));
-await commercial.post(`/orders/${orderId}/stage`, { stage: 'advance_pending' });
-const adv = await accounts.post('/payments', { order_id: orderId, amount: order.advance_required, payment_date: today, mode: 'rtgs', reference: `UTR${stamp}` });
-log(adv.status === 201, 'accounts records the advance', adv.data?.error);
-log((await commercial.get(`/orders/${orderId}`)).data.stage === 'order_confirmed', 'advance receipt confirms the order automatically');
+// ---------------------------------------------------------------- 7. production & QC
+const prodOrder = (await production.get(`/orders/${orderId}`)).data;
+log(prodOrder && !hasKey(prodOrder, /_minor"/), 'production sees the order with quantities and dates but no prices');
+let line = prodOrder.lines[0];
+const execUpdate = await exec.post(`/order-lines/${line.id}/update`, { version: line.version, phase: 'production' });
+log(execUpdate.status === 403, 'a sales executive cannot post production updates');
+let up = await production.post(`/order-lines/${line.id}/update`, { version: line.version, phase: 'production', work_status: 'in_progress', forecast_ready_date: addDays(10), forecast_dispatch_date: addDays(12) });
+log(up.status === 200, 'production moves the line into production with forecasts', up.data?.error);
+line = (await production.get(`/orders/${orderId}`)).data.lines[0];
+up = await production.post(`/order-lines/${line.id}/update`, { version: line.version, phase: 'qc', work_status: 'in_progress' });
+log(up.status === 200, 'line moves to QC', up.data?.error);
+line = (await production.get(`/orders/${orderId}`)).data.lines[0];
+const selfPass = await production.post(`/order-lines/${line.id}/update`, { version: line.version, phase: 'ready', work_status: 'phase_complete' });
+log(selfPass.status === 400, 'production cannot pass its own QC');
+up = await quality.post(`/order-lines/${line.id}/update`, { version: line.version, phase: 'ready', work_status: 'phase_complete', ready_qty: 10, qc_summary: 'Accuracy test passed; IR test OK' });
+log(up.status === 200, 'quality passes QC and records the ready quantity', up.data?.error);
+const boardRow = (await production.get('/production/board')).data.columns.find((c) => c.phase === 'ready').lines.find((l) => l.order_id === orderId);
+log(Boolean(boardRow) && boardRow.qc_summary, 'the production board shows the line ready with its QC summary');
 
-// ---------------------------------------------------------------- 5. production & quality
-const execProd = await exec.post(`/orders/${orderId}/stage`, { stage: 'under_production' });
-log(execProd.status === 403, 'a sales executive cannot move the order into production');
-await production.post(`/orders/${orderId}/stage`, { stage: 'material_check' });
-const prodUpdate = await production.put(`/orders/${orderId}/production`, {
-  material_status: 'partial', material_constraint: 'Thyristor modules awaited', planned_start: addDays(2), planned_completion: addDays(15),
-  update_note: 'Slot booked in panel shop',
-});
-log(prodUpdate.status === 200, 'production updates material status and plan', prodUpdate.data?.error);
-const qcByProduction = await production.put(`/orders/${orderId}/production`, { qc_status: 'passed' });
-log(qcByProduction.status === 403, 'production cannot mark its own quality check as passed');
-await production.post(`/orders/${orderId}/stage`, { stage: 'production_scheduled' });
-await production.post(`/orders/${orderId}/stage`, { stage: 'under_production' });
-const items2 = (await production.get(`/orders/${orderId}`)).data.items;
-await production.put(`/orders/${orderId}/production`, { items: items2.map((i) => ({ id: i.id, qty_produced: i.qty })), update_note: 'Assembly complete' });
-await production.post(`/orders/${orderId}/stage`, { stage: 'quality_check' });
-const packEarly = await production.post(`/orders/${orderId}/stage`, { stage: 'packing' });
-log(packEarly.status === 400, 'packing is blocked until quality check passes');
-const qc = await quality.put(`/orders/${orderId}/production`, { qc_status: 'passed', qc_remarks: 'Routine tests passed, FAT witnessed' });
-log(qc.status === 200, 'quality team passes the QC', qc.data?.error);
-await production.post(`/orders/${orderId}/stage`, { stage: 'packing' });
-await production.post(`/orders/${orderId}/stage`, { stage: 'ready_for_dispatch' });
-log((await production.get(`/orders/${orderId}`)).data.stage === 'ready_for_dispatch', 'order reaches ready for dispatch');
-
-// ---------------------------------------------------------------- 6. partial dispatch, invoice, delivery
-const ordForDispatch = (await dispatch.get(`/orders/${orderId}`)).data;
-const panelItem = ordForDispatch.items.find((i) => i.qty === 2);
-const commItem = ordForDispatch.items.find((i) => i.id !== panelItem.id);
-const d1 = await dispatch.post(`/orders/${orderId}/dispatches`, {
-  items: [{ order_item_id: panelItem.id, qty: 1 }], dispatch_date: today, transporter: 'VRL Logistics', vehicle_number: 'MH12 AB 1234',
-  lr_number: '556677', boxes: 3, eway_bill: '1234 5678 9012', expected_delivery_date: addDays(3), create_invoice: true,
-});
-log(d1.status === 201, 'dispatch team ships part of the order with an invoice', d1.data?.error);
-const afterPartial = (await dispatch.get(`/orders/${orderId}`)).data;
-log(afterPartial.dispatch_status === 'partial' && afterPartial.stage === 'ready_for_dispatch', 'partial shipment keeps the order open');
-log(afterPartial.invoices === undefined || afterPartial.invoices.length === 0, 'dispatch team sees no invoice data');
-const accInvoices = (await accounts.get(`/orders/${orderId}`)).data.invoices;
-log(accInvoices.length === 1 && accInvoices[0].total > 0, 'invoice raised for the shipped quantity', JSON.stringify(accInvoices.map((i) => i.total)));
-const over = await dispatch.post(`/orders/${orderId}/dispatches`, { items: [{ order_item_id: panelItem.id, qty: 5 }], dispatch_date: today });
-log(over.status === 400, 'cannot dispatch more than the pending quantity');
-const d2 = await dispatch.post(`/orders/${orderId}/dispatches`, {
-  items: [{ order_item_id: panelItem.id, qty: 1 }, { order_item_id: commItem.id, qty: commItem.qty }], dispatch_date: today, transporter: 'VRL Logistics', create_invoice: true,
-});
-log(d2.status === 201, 'final shipment dispatched', d2.data?.error);
+// ---------------------------------------------------------------- 8. planned, actual and partial dispatch
+line = (await dispatch.get(`/orders/${orderId}`)).data.lines[0];
+const plan = await dispatch.post('/dispatches', { planned: true, planned_date: addDays(1), lines: [{ line_id: line.id, qty: 6 }], carrier: 'VRL Logistics' }, `journey-plan-${stamp}`);
+log(plan.status === 201 && plan.data.status === 'planned', 'dispatch plans a shipment', plan.data?.error);
+log((await dispatch.get(`/orders/${orderId}`)).data.lines[0].quantities.dispatched === 0, 'a plan changes no balance');
+const posted = await dispatch.post(`/dispatches/${plan.data.id}/post`, { dispatch_date: today, vehicle_number: 'MH12 AB 1234', tracking_no: '556677', boxes: 3, eway_bill: '1234 5678 9012' }, `journey-post-${stamp}`);
+log(posted.status === 201 && posted.data.status === 'posted', 'the plan is posted once the goods leave', posted.data?.error);
+log((await dispatch.get(`/orders/${orderId}`)).data.lines[0].quantities.dispatched === 6, 'posting reduces the balance');
+const over = await dispatch.post('/dispatches', { lines: [{ line_id: line.id, qty: 10 }], dispatch_date: today });
+log(over.status === 409 && over.data?.details?.code === 'over_dispatch', 'over-dispatch beyond the remaining balance is rejected');
+const future = await dispatch.post('/dispatches', { lines: [{ line_id: line.id, qty: 4 }], dispatch_date: addDays(3) });
+log(future.status === 400, 'a future date is a plan, not a dispatch');
+const final = await dispatch.post('/dispatches', { lines: [{ line_id: line.id, qty: 4 }], dispatch_date: today, carrier: 'VRL Logistics', tracking_no: '556699' }, `journey-final-${stamp}`);
+log(final.status === 201, 'final shipment dispatched', final.data?.error);
 const afterFull = (await dispatch.get(`/orders/${orderId}`)).data;
-log(afterFull.stage === 'dispatched', 'order moves to dispatched when everything has shipped');
-await dispatch.put(`/dispatches/${d1.data.id}`, { status: 'delivered', delivered_date: today, received_by: 'Store in-charge', received_confirmed: true });
-await dispatch.put(`/dispatches/${d2.data.id}`, { status: 'delivered', delivered_date: today, received_by: 'Store in-charge', received_confirmed: true });
-log((await dispatch.get(`/orders/${orderId}`)).data.stage === 'delivered', 'order marked delivered when all shipments are delivered');
+log(afterFull.summary.outcome.includes('fully_dispatched'), 'the order is fully dispatched');
+const delivered = await dispatch.post(`/dispatches/${final.data.id}/delivered`, { delivered_at: today, received_by_name: 'Store in-charge' });
+log(delivered.status === 200, 'delivery recorded with the receiver', delivered.data?.error);
+const told = await exec.post(`/dispatches/${final.data.id}/notify`, { channel: 'email' });
+log(told.status === 200, 'sales records that the customer was told', told.data?.error);
 
-// ---------------------------------------------------------------- 7. payments
-const withPay = (await accounts.get(`/orders/${orderId}`)).data;
-const inv = withPay.invoices.find((i) => i.balance > 1);
-const overPay = await accounts.post('/payments', { invoice_id: inv.id, amount: inv.balance + 100000, payment_date: today });
-log(overPay.status === 400, 'payment beyond the invoice balance is rejected');
-const pay = await accounts.post('/payments', { invoice_id: inv.id, amount: inv.balance - 500, tds_amount: 500, payment_date: today, mode: 'neft', reference: 'UTR9911' });
-log(pay.status === 201, 'accounts records payment with TDS', pay.data?.error);
-const balAfter = (await accounts.get(`/orders/${orderId}`)).data.invoices.find((i) => i.id === inv.id);
-log(Math.abs(balAfter.balance) < 1.5, 'invoice balance settles after receipt plus TDS', `balance ${balAfter.balance}`);
-const execView = (await exec.get(`/orders/${orderId}`)).data;
-log(execView.credit_notes.length === 0 && execView.payments.every((p) => p.tds_amount === undefined), 'sales executive does not see TDS/deduction detail');
-const prodView = (await production.get(`/orders/${orderId}`)).data;
-log(prodView.grand_total === undefined && prodView.items.every((i) => i.unit_price === undefined), 'production sees quantities but no prices');
-
-// ---------------------------------------------------------------- 8. service
-const complaint = await service.post('/complaints', {
-  customer_id: lead.customer_id, order_id: orderId, product_id: panel.id, serial_number: `APFC${stamp}`, category: 'hardware_failure',
-  severity: 'high', description: 'Contactor chattering on step 3', installation_date: today,
+// ---------------------------------------------------------------- 9. invoice and receipt with TDS
+const fin = (await accounts.get(`/finance/orders/${orderId}`)).data;
+const taxable = fin.value_minor;
+const tax = Math.round(taxable * 0.18);
+const gross = taxable + tax;
+const advanceIn = fin.advance_received_minor;
+const inv = await accounts.post('/finance/invoices', {
+  customer_id: customerId, order_id: orderId, dispatch_id: final.data.id, invoice_ref: `INV/JT/${stamp}`, invoice_date: today, due_date: addDays(30), currency: 'INR',
+  taxable_amount: (taxable / 100).toFixed(2), tax_amount: (tax / 100).toFixed(2), gross_amount: (gross / 100).toFixed(2), advance_adjusted: (advanceIn / 100).toFixed(2),
 });
-log(complaint.status === 201, 'service registers a complaint', complaint.data?.error);
+log(inv.status === 201, 'accounts records the invoice, adjusting the advance', inv.data?.error);
+const overAdjust = await accounts.post('/finance/invoices', { customer_id: customerId, order_id: orderId, invoice_ref: `INV/JT/${stamp}-B`, invoice_date: today, due_date: addDays(30), currency: 'INR', gross_amount: '1000.00', advance_adjusted: '900.00' });
+log(overAdjust.status === 400, 'the same advance cannot be adjusted twice');
+const outstanding = gross - advanceIn;
+const tds = Math.round(outstanding * 0.02);
+const futureReceipt = await accounts.post(`/finance/invoices/${inv.data.id}/receipts`, { kind: 'receipt', amount: '100.00', effective_date: addDays(2) });
+log(futureReceipt.status === 400, 'a receipt cannot be dated in the future (a promise is not a receipt)');
+const rcpt = await accounts.post(`/finance/invoices/${inv.data.id}/receipts`, { kind: 'receipt', amount: ((outstanding - tds) / 100).toFixed(2), tds_amount: (tds / 100).toFixed(2), mode: 'neft', effective_date: today, reference: 'UTR9911' });
+log(rcpt.status === 201 && rcpt.data.outstanding_minor === 0, 'receipt plus TDS settles the invoice', rcpt.data?.error || `outstanding ${rcpt.data?.outstanding_minor}`);
+const execInvoices = (await exec.get(`/finance/invoices?order_id=${orderId}&state=all`)).data;
+log(execInvoices.rows.length === 1 && execInvoices.rows[0].tds_minor === undefined, 'a sales executive sees the invoice but not TDS detail');
+log((await dispatch.get('/finance/invoices')).status === 403, 'dispatch has no access to the invoice register');
+
+// ---------------------------------------------------------------- 10. complaint & service
+const cats = meta.dropdowns.complaint_category.filter((o) => o.active).map((o) => o.code);
+const complaint = await service.post('/complaints', {
+  customer_id: customerId, order_id: orderId, product_id: pick.p.id, serial_batch: `SN${stamp}`, category_code: cats.includes('display') ? 'display' : cats[0],
+  severity: 'high', description: 'Display flickers intermittently', owner_id: service.user.id, next_response_date: addDays(1), installation_date: today,
+});
+log(complaint.status === 201, 'service registers a complaint against the order', complaint.data?.error);
 const cid = complaint.data.id;
-const earlyResolve = await service.put(`/complaints/${cid}`, { status: 'resolved' });
-log(earlyResolve.status === 400, 'cannot resolve a complaint without root cause and resolution');
-const resolved = await service.put(`/complaints/${cid}`, { status: 'resolved', root_cause: 'Loose contactor coil connection', resolution_type: 'repair', resolution_notes: 'Retightened and tested' });
-log(resolved.status === 200, 'complaint resolved with root cause', resolved.data?.error);
-const warranty = (await service.get(`/complaints/${cid}`)).data;
-log(warranty.warranty_status === 'in_warranty', 'warranty inferred from installation date and product warranty');
+let k = (await service.get(`/complaints/${cid}`)).data.complaint;
+log(k.warranty_status === 'in_warranty', 'warranty inferred from the installation date and product warranty', k.warranty_status);
+const early2 = await service.put(`/complaints/${cid}`, { version: k.version, status: 'resolved' });
+log(early2.status === 400, 'a complaint cannot be resolved without the resolution');
+const resolved = await service.put(`/complaints/${cid}`, { version: k.version, status: 'resolved', root_cause_code: 'component', resolution_code: 'replacement', resolution_summary: 'Replaced the display module', resolved_date: today });
+log(resolved.status === 200, 'complaint resolved with root cause and resolution', resolved.data?.error);
+k = (await service.get(`/complaints/${cid}`)).data.complaint;
+const rated = await service.put(`/complaints/${cid}`, { version: k.version, feedback_rating: 5, customer_feedback: 'Quick replacement' });
+log(rated.status === 200, 'customer feedback rating recorded', rated.data?.error);
 
-// ---------------------------------------------------------------- 9. customer tracking portal & timeline
-const tracking = await anon(`/public/orders/${(await commercial.get(`/orders/${orderId}`)).data.tracking_token}`);
-log(tracking.status === 200 && tracking.data.milestones.filter((m) => m.done).length >= 4, 'customer order tracking page shows progress');
-log(tracking.data.dispatches.length === 2, 'tracking page lists both shipments');
-const timeline = (await exec.get(`/customers/${lead.customer_id}/timeline`)).data;
-const kinds = new Set(timeline.map((t) => t.kind));
-log(['communication', 'lead', 'quotation', 'order', 'dispatch', 'payment', 'complaint'].every((k) => kinds.has(k)), 'customer timeline spans every module', [...kinds].join(','));
+// ---------------------------------------------------------------- 11. customer tracking, timeline, QR scan page
+const tracking = await anon(`/public/orders/${order.order.tracking_token}`);
+log(tracking.status === 200 && tracking.data.dispatches.length === 2 && tracking.data.lines[0].quantities.dispatched === 10, 'customer tracking link shows both shipments and quantities');
+log(!hasKey(tracking.data, /_minor|cost|margin/), 'the tracking link shows no commercial values');
+const timeline = (await exec.get(`/customers/${customerId}/timeline`)).data;
+const groups = new Set(timeline.map((t) => t.group));
+log(['enquiries', 'quotations', 'orders'].every((g) => groups.has(g)), 'customer timeline spans enquiries, quotations and orders', [...groups].join(','));
+const obj = await admin.post('/objects', { name: `Press shop meter panel ${stamp}`, visibility: 'public', customer_id: customerId, order_id: orderId, serial_number: `SN${stamp}` });
+log(obj.status === 201, 'a QR object is created for the delivered panel', obj.data?.error);
+const objDetail = (await admin.get(`/objects/${obj.data.id}`)).data;
+const code = await admin.post(`/objects/${obj.data.id}/code`, { code_type: 'qr' });
+log(code.status === 201 && code.data.permanent_url?.includes(objDetail.public_id), 'a permanent QR code is generated', code.data?.error);
+const scan = await anon(`/public/objects/${objDetail.public_id}`);
+log(scan.status === 200 && scan.data.state === 'ok', 'scanning the code opens the public object page');
 
-// ---------------------------------------------------------------- 10. scope checks
-const otherExec = await login('lakshmi@veritek.example'); // South region
-const leak = await otherExec.get(`/leads/${leadId}`);
-log(leak.status === 403 || leak.status === 404, 'another region\'s executive cannot open this lead');
-const rmLeak = await rm.get(`/leads/${leadId}`);
-log(rmLeak.status === 200, 'the regional manager for this region can open it');
-const prodLeads = await production.get('/leads');
-log(prodLeads.status === 403, 'production has no access to the leads module');
+// ---------------------------------------------------------------- 12. roles & scope
+const leak = await otherExec.get(`/enquiries/${enquiryId}`);
+log(leak.status === 403 || leak.status === 404, 'another region\'s executive cannot open this enquiry');
+log((await rm.get(`/enquiries/${enquiryId}`)).status === 200, 'the regional manager for the customer\'s region can open it');
+log((await production.get('/enquiries')).status === 403, 'production has no access to enquiries');
+log((await viewer.post('/enquiries', { customer_id: customerId })).status === 403, 'read-only management cannot change anything');
+const prodProducts = (await production.get('/products')).data;
+log(!hasKey(prodProducts, /_minor"/), 'production sees the product list without prices');
+log((await exec.get('/admin/users')).status === 403, 'only the super admin manages users');
 
-console.log(failures ? `\n${failures} CHECK(S) FAILED` : '\nALL CHECKS PASSED');
+console.log(failures ? `\n${failures} of ${checks} CHECK(S) FAILED` : `\nALL ${checks} CHECKS PASSED`);
 process.exit(failures ? 1 : 0);

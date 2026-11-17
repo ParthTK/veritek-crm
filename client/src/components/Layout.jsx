@@ -7,45 +7,41 @@ import { timeAgo } from '../lib/format.js';
 import Icon from './Icon.jsx';
 import { Avatar, Button, Popover } from './ui.jsx';
 import { useMeta } from './domain.jsx';
+import { useQuickEntry } from './QuickEntry.jsx';
 
 const NAV = [
-  { group: null, items: [{ to: '/', label: 'Dashboard', icon: 'dashboard', perm: 'dashboard.view', end: true }] },
-  {
-    group: 'Sales',
-    items: [
-      { to: '/leads', label: 'Leads', icon: 'leads', perm: 'leads.view' },
-      { to: '/opportunities', label: 'Opportunities', icon: 'pipeline', perm: 'leads.view' },
-      { to: '/customers', label: 'Customers', icon: 'customers', perm: 'customers.view' },
-      { to: '/contacts', label: 'Contacts', icon: 'contacts', perm: 'customers.view' },
-      { to: '/followups', label: 'Follow-Ups', icon: 'followups', perm: 'dashboard.view', badge: 'followups' },
-      { to: '/quotations', label: 'Quotations', icon: 'quotations', perm: 'quotations.view' },
-    ],
-  },
-  {
-    group: 'Operations',
-    items: [
-      { to: '/orders', label: 'Sales Orders', icon: 'orders', perm: 'orders.view' },
-      { to: '/production', label: 'Production Tracking', icon: 'production', perm: 'production.view' },
-      { to: '/dispatches', label: 'Dispatches', icon: 'truck', perm: 'dispatch.view' },
-      { to: '/payments', label: 'Payments', icon: 'payments', perm: 'payments.view' },
-    ],
-  },
-  {
-    group: 'Catalogue & market',
-    items: [
-      { to: '/products', label: 'Products', icon: 'products', perm: 'products.view' },
-      { to: '/campaigns', label: 'Exhibitions & Campaigns', icon: 'campaigns', perm: 'campaigns.view' },
-      { to: '/complaints', label: 'Complaints & Service', icon: 'complaints', perm: 'complaints.view' },
-    ],
-  },
-  {
-    group: 'Management',
-    items: [
-      { to: '/reports', label: 'Reports', icon: 'reports', perm: 'reports.view' },
-      { to: '/team', label: 'Team & Approvals', icon: 'team', perm: 'team.view', badge: 'approvals' },
-      { to: '/settings', label: 'Settings', icon: 'settings', perm: 'settings.edit' },
-    ],
-  },
+  { group: null, items: [
+    { to: '/', label: 'Overview', icon: 'home', perm: 'dashboard.view', end: true },
+    { to: '/queue', label: 'Work queue', icon: 'queue', perm: 'queue.view', badge: 'queue' },
+    { to: '/followups', label: 'Follow-ups', icon: 'calendar', perm: 'tasks.edit', badge: 'followups' },
+    { to: '/analytics', label: 'Sales dashboard', icon: 'dashboard', perm: 'analytics.view' },
+  ] },
+  { group: 'Customers & sales', items: [
+    { to: '/past-customers', label: 'Past customers', icon: 'history', perm: 'past.view' },
+    { to: '/enquiries', label: 'Enquiries & pipeline', icon: 'inbox', perm: 'enquiries.view' },
+    { to: '/quotations', label: 'Quotations', icon: 'quotation', perm: 'quotes.view' },
+    { to: '/customers', label: 'Customers', icon: 'users', perm: 'customers.view' },
+    { to: '/contacts', label: 'Contacts', icon: 'contacts', perm: 'customers.view' },
+    { to: '/campaigns', label: 'Campaigns', icon: 'campaigns', perm: 'campaigns.view' },
+  ] },
+  { group: 'Orders', items: [
+    { to: '/orders', label: 'Active orders', icon: 'box', perm: 'orders.view' },
+    { to: '/production', label: 'Production board', icon: 'factory', perm: 'orders.view' },
+    { to: '/dispatches', label: 'Dispatches', icon: 'truck', perm: 'orders.view' },
+  ] },
+  { group: 'Money & service', items: [
+    { to: '/payments', label: 'Payments', icon: 'payment', perm: 'finance.view' },
+    { to: '/complaints', label: 'Complaints', icon: 'wrench', perm: 'complaints.view' },
+  ] },
+  { group: 'Catalogue', items: [
+    { to: '/products', label: 'Products & prices', icon: 'products', perm: 'products.view' },
+    { to: '/objects', label: 'Objects & QR', icon: 'qr', perm: 'objects.view' },
+  ] },
+  { group: 'Management', items: [
+    { to: '/reports', label: 'Reports', icon: 'chart', perm: 'reports.view' },
+    { to: '/team', label: 'Team & approvals', icon: 'team', perm: ['team.view', 'quotes.approve'], badge: 'approvals' },
+    { to: '/settings', label: 'Settings', icon: 'settings', perm: 'settings.manage' },
+  ] },
 ];
 
 function GlobalSearch() {
@@ -55,7 +51,6 @@ function GlobalSearch() {
   const [hl, setHl] = useState(0);
   const navigate = useNavigate();
   const ref = useRef(null);
-
   useEffect(() => {
     if (q.trim().length < 2) {
       setResults([]);
@@ -64,7 +59,6 @@ function GlobalSearch() {
     const t = setTimeout(() => api.get('/search', { q }).then((r) => { setResults(r); setHl(0); }).catch(() => {}), 200);
     return () => clearTimeout(t);
   }, [q]);
-
   useEffect(() => {
     const onDoc = (e) => !ref.current?.contains(e.target) && setOpen(false);
     const onKey = (e) => {
@@ -80,34 +74,30 @@ function GlobalSearch() {
       document.removeEventListener('keydown', onKey);
     };
   }, []);
-
   const go = (r) => {
     navigate(r.link);
     setOpen(false);
     setQ('');
   };
-
   return (
     <div className="search" ref={ref}>
       <Icon name="search" size={16} />
-      <input
-        value={q} placeholder="Search customers, leads, quotes, orders, PO, serial no…  (Ctrl+K)" aria-label="Global search"
+      <input value={q} placeholder="Company, phone, email, enquiry, order or PO…  (Ctrl+K)" aria-label="Search everything"
         onFocus={() => setOpen(true)} onChange={(e) => { setQ(e.target.value); setOpen(true); }}
         onKeyDown={(e) => {
           if (e.key === 'ArrowDown') setHl((h) => Math.min(results.length - 1, h + 1));
           if (e.key === 'ArrowUp') setHl((h) => Math.max(0, h - 1));
           if (e.key === 'Enter' && results[hl]) go(results[hl]);
           if (e.key === 'Escape') setOpen(false);
-        }}
-      />
+        }} />
       {open && q.trim().length >= 2 && (
-        <div className="search-results">
+        <div className="search-results" role="listbox">
           {results.length === 0 && <div className="muted small" style={{ padding: 10 }}>No matches</div>}
           {results.map((r, i) => (
             <a key={r.link + r.label} href={r.link} className={i === hl ? 'hl' : ''} onClick={(e) => { e.preventDefault(); go(r); }}>
               <span className="badge sm">{r.type}</span>
               <span className="grow truncate">{r.label}</span>
-              <span className="muted small truncate" style={{ maxWidth: 160 }}>{r.sub}</span>
+              <span className="muted small truncate" style={{ maxWidth: 170 }}>{r.sub}</span>
             </a>
           ))}
         </div>
@@ -123,16 +113,13 @@ function Notifications({ unread, onChange }) {
   return (
     <Popover trigger={({ toggle }) => (
       <button type="button" className="btn ghost icon" onClick={() => { toggle(); load(); }} aria-label={`Notifications, ${unread} unread`} style={{ position: 'relative' }}>
-        <Icon name="bell" size={18} />
-        {unread > 0 && <span className="count" style={{ position: 'absolute', top: 2, right: 0, background: '#c0392b', color: '#fff', fontSize: 10, borderRadius: 8, padding: '0 4px', lineHeight: '15px' }}>{unread > 99 ? '99+' : unread}</span>}
+        <Icon name="bell" size={19} />
+        {unread > 0 && <span style={{ position: 'absolute', top: 3, right: 2, background: 'var(--danger)', color: '#fff', fontSize: 10, borderRadius: 8, padding: '0 4px', lineHeight: '15px', fontWeight: 700 }}>{unread > 99 ? '99+' : unread}</span>}
       </button>
     )}>
       {({ close }) => (
         <div className="notif">
-          <div className="card-head">
-            <h2>Notifications</h2>
-            <Button size="xs" variant="ghost" onClick={async () => { await api.post('/notifications/read'); load(); }}>Mark all read</Button>
-          </div>
+          <div className="card-head"><h2>Notifications</h2><Button size="xs" variant="ghost" onClick={async () => { await api.post('/notifications/read'); load(); }}>Mark all read</Button></div>
           <div className="notif-list">
             {!rows && <div className="loading">Loading…</div>}
             {rows?.length === 0 && <div className="empty">You're all caught up</div>}
@@ -141,10 +128,9 @@ function Notifications({ unread, onChange }) {
                 e.preventDefault();
                 if (!n.read_at) await api.post('/notifications/read', { ids: [n.id] }).catch(() => {});
                 close();
-                onChange(Math.max(0, unread - (n.read_at ? 0 : 1)));
                 if (n.link) navigate(n.link);
               }}>
-                <span className={`sev ${n.severity}`} />
+                <span className="dot" style={{ marginTop: 6, background: n.severity === 'danger' ? 'var(--danger)' : 'var(--brand)' }} />
                 <span className="grow">
                   <div className="strong small">{n.title}</div>
                   {n.message && <div className="small secondary">{n.message}</div>}
@@ -179,86 +165,78 @@ function useTheme() {
   return [theme, setTheme];
 }
 
-function DemoNotice() {
-  const { demo } = useMeta();
-  const [hidden, setHidden] = useState(false);
-  if (!demo || hidden) return null;
-  return (
-    <div className="demo-strip">
-      <Icon name="alert" size={14} />
-      <span className="grow">
-        <strong>Demo deployment.</strong> Each server instance holds its own copy of a data snapshot, so anything you add or change here is temporary and uploads are not kept. Sign in as any role and click around freely.
-      </span>
-      <button type="button" onClick={() => setHidden(true)} aria-label="Dismiss">×</button>
-    </div>
-  );
-}
-
 export default function Layout({ children }) {
   const { user, logout, can } = useAuth();
+  const meta = useMeta();
+  const quick = useQuickEntry();
   const [navOpen, setNavOpen] = useState(false);
-  const [counts, setCounts] = useState({ followups: 0, approvals: 0, unread: 0 });
+  const [counts, setCounts] = useState({ followups: 0, queue: 0, unread: 0, approvals: 0 });
   const [theme, setTheme] = useTheme();
+  const [hideDemo, setHideDemo] = useState(false);
   const location = useLocation();
 
   useEffect(() => setNavOpen(false), [location.pathname]);
   useEffect(() => {
     const load = () => {
       api.get('/notifications', { unread: 1, limit: 1 }).then((r) => setCounts((c) => ({ ...c, unread: r.unread }))).catch(() => {});
-      api.get('/followups', { bucket: 'overdue', limit: 1 }).then((r) => setCounts((c) => ({ ...c, followups: (r.counts.overdue || 0) + (r.counts.today || 0) }))).catch(() => {});
-      if (can('approvals.decide')) api.get('/approvals').then((r) => setCounts((c) => ({ ...c, approvals: r.filter((a) => a.can_decide).length }))).catch(() => {});
+      if (can('tasks.edit')) api.get('/tasks', { owner: 'me', bucket: 'overdue', limit: 1 }).then((r) => setCounts((c) => ({ ...c, followups: (r.counts.overdue || 0) + (r.counts.today || 0) }))).catch(() => {});
+      if (can('quotes.approve')) api.get('/approvals', { status: 'pending' }).then((rows) => setCounts((c) => ({ ...c, approvals: rows.filter((a) => a.can_decide).length }))).catch(() => {});
     };
     load();
     const t = setInterval(load, 60000);
-    return () => clearInterval(t);
+    window.addEventListener('data:changed', load);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener('data:changed', load);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
 
+  const canQuick = can('enquiries.edit', 'tasks.edit', 'orders.update', 'dispatch.post');
   return (
     <div className={`app ${navOpen ? 'nav-open' : ''}`}>
       {navOpen && <div className="scrim" onClick={() => setNavOpen(false)} />}
-      <aside className="sidebar">
-        <Link to="/" className="brand" style={{ textDecoration: 'none' }}>
-          <span className="brand-mark">
-            <svg width="18" height="18" viewBox="0 0 32 32" aria-hidden><path d="M8 9l8 15 8-15" stroke="white" strokeWidth="3.5" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
-          </span>
-          <span>
-            <div className="brand-name">Veritek CRM</div>
-            <div className="brand-sub">Sales · Orders · Service</div>
-          </span>
+      <aside className="sidebar" aria-label="Main navigation">
+        <Link to="/" className="brand">
+          <div className="brand-name"><span className="slash" aria-hidden />{meta.settings.company.short || 'VERITEK'}</div>
+          <div className="brand-sub">{meta.settings.company.name.replace(/^Veritek /, '')}</div>
         </Link>
-        <nav className="nav" aria-label="Main">
+        <nav className="nav">
           {NAV.map((section) => {
-            const items = section.items.filter((i) => can(i.perm));
+            const items = section.items.filter((i) => can(...[].concat(i.perm)));
             if (!items.length) return null;
             return (
               <div key={section.group || 'main'} style={{ display: 'contents' }}>
                 {section.group && <div className="nav-group">{section.group}</div>}
                 {items.map((i) => (
                   <NavLink key={i.to} to={i.to} end={i.end}>
-                    <Icon name={i.icon} size={17} />
+                    <Icon name={i.icon} size={18} />
                     <span>{i.label}</span>
-                    {i.badge && counts[i.badge] > 0 && <span className="count">{counts[i.badge]}</span>}
+                    {i.badge && counts[i.badge] > 0 && <span className="count" title={i.badge === 'approvals' ? 'Waiting for your approval' : 'Due today or overdue'}>{counts[i.badge]}</span>}
                   </NavLink>
                 ))}
               </div>
             );
           })}
         </nav>
-        <div className="sidebar-foot">Lead → Quote → PO → Production → Dispatch → Payment → Service → Repeat</div>
+        <div className="sidebar-foot">
+          {meta.env !== 'production' && <div style={{ marginBottom: 6 }}><span className="env-badge">{meta.env}</span></div>}
+          Times shown in {meta.timezone}
+        </div>
       </aside>
       <div className="main">
         <header className="topbar">
           <button type="button" className="btn ghost icon menu-btn" onClick={() => setNavOpen(true)} aria-label="Open menu"><Icon name="menu" /></button>
           <GlobalSearch />
           <div className="grow" />
+          {canQuick && <Button variant="cta" icon="plus" onClick={() => quick.open()}><span className="hide-mobile">Quick entry</span></Button>}
           <Notifications unread={counts.unread} onChange={(n) => setCounts((c) => ({ ...c, unread: n }))} />
           <Popover trigger={({ toggle }) => (
-            <button type="button" className="btn ghost" onClick={toggle} style={{ height: 40 }}>
+            <button type="button" className="btn ghost" onClick={toggle} style={{ height: 42 }} aria-label="Account menu">
               <Avatar name={user.name} />
-              <span className="col" style={{ gap: 0, alignItems: 'flex-start', lineHeight: 1.2 }}>
+              <span className="col hide-mobile" style={{ gap: 0, alignItems: 'flex-start', lineHeight: 1.2 }}>
                 <span className="small strong">{user.name}</span>
-                <span className="tiny muted">{labelOf(ROLES, user.role)}{user.region_name ? ` · ${user.region_name}` : ''}</span>
+                <span className="tiny muted">{labelOf(ROLES, user.role)}</span>
               </span>
               <Icon name="chevronDown" size={14} />
             </button>
@@ -266,17 +244,27 @@ export default function Layout({ children }) {
             {({ close }) => (
               <div className="menu">
                 <div className="small muted" style={{ padding: '6px 10px' }}>{user.email}</div>
-                <button type="button" onClick={() => { setTheme(theme === 'dark' ? 'light' : theme === 'light' ? '' : 'dark'); }}>
+                <button type="button" onClick={() => setTheme(theme === 'dark' ? 'light' : theme === 'light' ? '' : 'dark')}>
                   <Icon name={theme === 'dark' ? 'moon' : 'sun'} size={15} /> Theme: {theme || 'system'}
                 </button>
-                <Link to="/account" onClick={close}><Icon name="shield" size={15} /> Change password</Link>
+                <Link to="/account" onClick={close}><Icon name="shield" size={15} /> Password & sign-in security</Link>
+                <div className="sep" />
                 <button type="button" onClick={logout}><Icon name="logout" size={15} /> Sign out</button>
               </div>
             )}
           </Popover>
         </header>
-        <DemoNotice />
-        <main className="content">{children}</main>
+        {meta.demo && !hideDemo && (
+          <div className="banner" role="note">
+            <Icon name="info" size={15} />
+            <span className="grow"><strong>Demo data.</strong> All companies and records are fictional.{meta.ephemeral ? ' This demo server keeps changes only temporarily.' : ''}</span>
+            <button type="button" onClick={() => setHideDemo(true)} aria-label="Dismiss">×</button>
+          </div>
+        )}
+        {user.must_change_password && location.pathname !== '/account' && (
+          <div className="banner danger"><Icon name="lock" size={15} /><span className="grow">Please set your own password before continuing.</span><Link to="/account">Change password</Link></div>
+        )}
+        <main className="content" id="main">{children}</main>
       </div>
     </div>
   );

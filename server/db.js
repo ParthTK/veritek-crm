@@ -4,20 +4,30 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+export const ROOT = path.join(here, '..');
 
-// Serverless platforms give us a read-only bundle and a writable /tmp, so the database
-// lives there and is restored from the snapshot shipped with the deployment on cold start.
+// Serverless platforms give a read-only bundle and a writable /tmp: the database lives there and is
+// restored from the snapshot shipped with the deployment on a cold start.
 export const EPHEMERAL = Boolean(process.env.VERCEL || process.env.CRM_EPHEMERAL);
-export const DATA_DIR = process.env.CRM_DATA_DIR || (EPHEMERAL ? '/tmp/veritek-data' : path.join(here, '..', 'data'));
-export const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
-fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+export const ENV = process.env.CRM_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development');
+export const DATA_DIR = process.env.CRM_DATA_DIR || (EPHEMERAL ? '/tmp/veritek-data' : path.join(ROOT, 'data'));
+export const FILE_DIR = path.join(DATA_DIR, 'files');
+export const BACKUP_DIR = process.env.CRM_BACKUP_DIR || path.join(DATA_DIR, 'backups');
+export const DB_PATH = process.env.CRM_DB || path.join(DATA_DIR, 'veritek.sqlite');
+fs.mkdirSync(FILE_DIR, { recursive: true });
 
-export const DB_PATH = process.env.CRM_DB || path.join(DATA_DIR, 'crm.sqlite');
-
-const SNAPSHOT = path.join(here, '..', 'seed', 'crm-seed.sqlite');
-if (!fs.existsSync(DB_PATH) && fs.existsSync(SNAPSHOT)) {
+export const SNAPSHOT = path.join(ROOT, 'seed', 'veritek-seed.sqlite');
+const SNAPSHOT_FILES = path.join(ROOT, 'seed', 'files');
+export const RESTORED_FROM_SNAPSHOT = !fs.existsSync(DB_PATH) && fs.existsSync(SNAPSHOT) && process.env.CRM_NO_SNAPSHOT !== '1';
+if (RESTORED_FROM_SNAPSHOT) {
   fs.copyFileSync(SNAPSHOT, DB_PATH);
-  console.log(`Restored the demo database from ${path.basename(SNAPSHOT)}`);
+  if (fs.existsSync(SNAPSHOT_FILES)) {
+    for (const name of fs.readdirSync(SNAPSHOT_FILES)) {
+      const target = path.join(FILE_DIR, name);
+      if (!fs.existsSync(target)) fs.copyFileSync(path.join(SNAPSHOT_FILES, name), target);
+    }
+  }
+  console.log(`Restored the demo database and documents from ${path.basename(SNAPSHOT)}`);
 }
 
 export const db = new DatabaseSync(DB_PATH);
@@ -42,11 +52,6 @@ function bindValue(v) {
 }
 
 function bind(params) {
-  if (params.length === 1 && params[0] && typeof params[0] === 'object' && !Array.isArray(params[0])) {
-    const out = {};
-    for (const [k, v] of Object.entries(params[0])) out[k] = bindValue(v);
-    return [out];
-  }
   const flat = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
   return flat.map(bindValue);
 }
@@ -61,22 +66,19 @@ export const val = (sql, ...params) => {
 
 const columnCache = new Map();
 export function columns(table) {
-  if (!columnCache.has(table)) {
-    columnCache.set(table, new Set(all(`PRAGMA table_info(${table})`).map((c) => c.name)));
-  }
+  if (!columnCache.has(table)) columnCache.set(table, new Set(all(`PRAGMA table_info(${table})`).map((c) => c.name)));
   return columnCache.get(table);
 }
 
-/** Insert only the keys that are real columns of the table. Returns the new row id. */
+/** Insert only keys that are real columns. Returns the new row id. */
 export function insert(table, data) {
   const cols = columns(table);
   const keys = Object.keys(data).filter((k) => cols.has(k) && data[k] !== undefined);
   const sql = `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`;
-  const res = run(sql, keys.map((k) => data[k]));
-  return Number(res.lastInsertRowid);
+  return Number(run(sql, keys.map((k) => data[k])).lastInsertRowid);
 }
 
-/** Update only the keys that are real columns (never the id). */
+/** Update real columns of a row (never the id). Returns the number of changed rows. */
 export function update(table, id, data) {
   const cols = columns(table);
   const keys = Object.keys(data).filter((k) => k !== 'id' && cols.has(k) && data[k] !== undefined);
@@ -85,8 +87,20 @@ export function update(table, id, data) {
   return Number(run(sql, [...keys.map((k) => data[k]), id]).changes);
 }
 
+/**
+ * Optimistic concurrency: update only if the stored version still matches, and bump it.
+ * Returns false when someone else saved first.
+ */
+export function updateVersioned(table, id, expectedVersion, data) {
+  const cols = columns(table);
+  const keys = Object.keys(data).filter((k) => !['id', 'version'].includes(k) && cols.has(k) && data[k] !== undefined);
+  const sets = [...keys.map((k) => `${k} = ?`), 'version = version + 1'];
+  const sql = `UPDATE ${table} SET ${sets.join(', ')} WHERE id = ? AND version = ?`;
+  return Number(run(sql, [...keys.map((k) => data[k]), id, expectedVersion]).changes) === 1;
+}
+
 let txDepth = 0;
-/** Run fn inside a transaction; nested calls use savepoints. */
+/** Run fn inside a transaction; nested calls use savepoints so an inner failure can be isolated. */
 export function tx(fn) {
   const sp = `sp${txDepth}`;
   db.exec(txDepth === 0 ? 'BEGIN IMMEDIATE' : `SAVEPOINT ${sp}`);
@@ -103,16 +117,27 @@ export function tx(fn) {
   }
 }
 
+/** Applies numbered SQL migrations from server/migrations exactly once each. */
 export function migrate() {
-  db.exec(fs.readFileSync(path.join(here, 'schema.sql'), 'utf8'));
+  db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TEXT NOT NULL)');
+  const applied = new Set(all('SELECT version FROM schema_migrations').map((r) => r.version));
+  const dir = path.join(here, 'migrations');
+  const pending = fs.readdirSync(dir).filter((f) => f.endsWith('.sql') && !applied.has(f)).sort();
+  for (const file of pending) {
+    tx(() => {
+      db.exec(fs.readFileSync(path.join(dir, file), 'utf8'));
+      run('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)', file, new Date().toISOString());
+    });
+    console.log(`Applied migration ${file}`);
+  }
   columnCache.clear();
+  return pending;
 }
 
-export function getSetting(key, fallback) {
-  const row = get('SELECT value FROM settings WHERE key = ?', key);
-  return row ? JSON.parse(row.value) : fallback;
-}
-
-export function setSetting(key, value) {
-  run('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', key, JSON.stringify(value));
+export function closeDb() {
+  try {
+    db.close();
+  } catch {
+    /* already closed */
+  }
 }

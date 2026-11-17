@@ -18,9 +18,9 @@ export function AuthProvider({ children }) {
     return () => window.removeEventListener('auth:expired', onExpired);
   }, []);
 
-  const login = useCallback(async (email, password) => {
-    const res = await api.post('/auth/login', { email, password });
-    setToken(res.token);
+  const login = useCallback(async (email, password, mfaCode, remember = true) => {
+    const res = await api.post('/auth/login', { email, password, mfa_code: mfaCode || undefined });
+    setToken(res.token, remember);
     setUser(res.user);
     return res.user;
   }, []);
@@ -35,13 +35,19 @@ export function AuthProvider({ children }) {
     setUser(null);
   }, []);
 
+  const replaceSession = useCallback((res) => {
+    setToken(res.token);
+    setUser(res.user);
+  }, []);
+
   const value = useMemo(() => ({
     user,
     ready,
     login,
     logout,
+    replaceSession,
     can: (...perms) => Boolean(user && perms.some((p) => user.permissions.includes(p))),
-  }), [user, ready, login, logout]);
+  }), [user, ready, login, logout, replaceSession]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

@@ -1,161 +1,150 @@
+// Complaints, returns and quality feedback. The reported symptom is kept apart from the confirmed root cause;
+// the insights tab shows repeated product issues, rates only where dispatched units are known.
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { COMPLAINT_CATEGORIES, COMPLAINT_STATUSES, COMPLAINT_SEVERITIES, WARRANTY_STATUSES, labelOf } from '@shared/constants.js';
+import { COMPLAINT_SEVERITIES, WARRANTY_STATUSES, labelOf, toneOf } from '@shared/constants.js';
 import { api } from '../api.js';
 import { useAuth } from '../auth.jsx';
-import { useApi, useUrlFilters } from '../lib/hooks.js';
-import { date, number } from '../lib/format.js';
-import { Badge, Button, Card, Chips, DataTable, Field, Input, Modal, OptionBadge, PageHeader, SearchBox, Select, Spinner, Tabs, Textarea, Tile, useToast } from '../components/ui.jsx';
-import { LineChart, BarChartH } from '../components/charts.jsx';
-import { CustomerPicker, PendingAttachments, UserSelect } from '../components/domain.jsx';
+import { useApi, useUrlFilters, useSave } from '../lib/hooks.js';
+import { date, monthLabel, number, timeAgo, todayLocal } from '../lib/format.js';
+import { Badge, Button, Card, Chips, DataTable, ErrorState, Field, Input, Modal, PageHeader, SaveStatus, SearchBox, Select, Spinner, Stat, Tabs, Textarea, EmptyState } from '../components/ui.jsx';
+import { CustomerPicker, OptionSelect, UserSelect, DateField, ProductSelect, useOptions, usePeople } from '../components/domain.jsx';
+import { BarChartH, ColumnChart } from '../components/charts.jsx';
+
+export const SeverityBadge = ({ value, size }) => (value ? <Badge tone={toneOf(COMPLAINT_SEVERITIES, value)} size={size}>{labelOf(COMPLAINT_SEVERITIES, value)}</Badge> : null);
+export const WarrantyBadge = ({ value, size }) => (value ? <Badge tone={toneOf(WARRANTY_STATUSES, value)} size={size}>{labelOf(WARRANTY_STATUSES, value)}</Badge> : null);
 
 export default function Complaints() {
   const { can } = useAuth();
   const navigate = useNavigate();
-  const [params, setParams] = useSearchParams();
-  const [f, setFilter] = useUrlFilters({ tab: 'list', status: 'open' });
-  const { data, loading, reload } = useApi(f.tab === 'list' ? '/complaints' : null, { q: f.q, status: f.status === 'all' ? '' : f.status, category: f.category, severity: f.severity, assigned_to: f.assigned_to, mine: f.mine });
-  const insights = useApi(f.tab === 'insights' ? '/complaints/insights' : null);
-  const [creating, setCreating] = useState(Boolean(params.get('new')));
-
+  const [params] = useSearchParams();
+  const people = usePeople();
+  const categories = useOptions('complaint_category');
+  const [f, setF] = useUrlFilters({ state: 'open', tab: 'list' });
+  const { data, error, reload } = useApi(f.tab === 'list' ? '/complaints' : null, { state: f.state, q: f.q, severity: f.severity, warranty: f.warranty, category: f.category, owner: f.owner, mine: f.mine });
+  const [adding, setAdding] = useState(Boolean(params.get('from_activity') || params.get('new')));
   return (
     <div className="stack">
-      <PageHeader title="Complaints & after-sales service" subtitle="Registration, warranty, site visits, root cause and customer feedback"
-        actions={can('complaints.edit') && <Button variant="primary" icon="plus" onClick={() => setCreating(true)}>Register complaint</Button>} />
-      <Tabs value={f.tab} onChange={(tab) => setFilter({ tab })} tabs={[{ key: 'list', label: 'Complaints' }, { key: 'insights', label: 'Quality insights' }]} />
-
+      <PageHeader title="Complaints & service" subtitle="Register, site visits, root cause, resolution and customer feedback — the reported symptom is kept separate from the confirmed cause."
+        actions={can('complaints.edit') && <Button variant="cta" icon="plus" onClick={() => setAdding(true)}>Register complaint</Button>} />
+      <Tabs value={f.tab} onChange={(tab) => setF({ tab })} tabs={[{ key: 'list', label: 'Complaints' }, { key: 'insights', label: 'Quality insights' }]} />
       {f.tab === 'list' && (
         <>
-          <div className="stack-sm" style={{ marginBottom: 12 }}>
-            <Chips value={f.status} onChange={(status) => setFilter({ status: status || 'all' })} options={[
-              { value: 'open', label: 'Open' }, ...COMPLAINT_STATUSES.map((s) => ({ value: s.value, label: s.label })), { value: 'all', label: 'All' },
-            ]} />
-            <div className="filter-bar" style={{ marginBottom: 0 }}>
-              <SearchBox value={f.q} onChange={(q) => setFilter({ q })} placeholder="Number, customer, serial number, description" />
-              <Select className="sm" value={f.category} onChange={(e) => setFilter({ category: e.target.value })} placeholder="Any issue type" options={COMPLAINT_CATEGORIES} />
-              <Select className="sm" value={f.severity} onChange={(e) => setFilter({ severity: e.target.value })} placeholder="Any severity" options={COMPLAINT_SEVERITIES} />
-              <UserSelect className="sm" roles={['service', 'quality']} value={f.assigned_to} onChange={(e) => setFilter({ assigned_to: e.target.value })} placeholder="Any technician" />
-            </div>
+          <Chips value={f.state} onChange={(v) => setF({ state: v })} options={[{ value: 'open', label: 'Open' }, { value: 'closed', label: 'Resolved & closed' }, { value: 'all', label: 'All' }]} />
+          <div className="filter-bar">
+            <SearchBox value={f.q} onChange={(q) => setF({ q })} placeholder="Complaint, customer, serial or description" />
+            <Select aria-label="Severity" value={f.severity || ''} onChange={(e) => setF({ severity: e.target.value })} placeholder="Any severity" options={COMPLAINT_SEVERITIES} />
+            <Select aria-label="Warranty" value={f.warranty || ''} onChange={(e) => setF({ warranty: e.target.value })} placeholder="Any warranty" options={WARRANTY_STATUSES} />
+            <Select aria-label="Category" value={f.category || ''} onChange={(e) => setF({ category: e.target.value })} placeholder="Any issue" options={categories} />
+            <Select aria-label="Owner" value={f.owner || ''} onChange={(e) => setF({ owner: e.target.value })} placeholder="Any owner" options={people.filter((p) => ['service', 'admin', 'coordinator', 'sales', 'production'].includes(p.group)).map((p) => ({ value: String(p.id), label: p.name }))} />
           </div>
+          {error && <ErrorState error={error} onRetry={reload} />}
           <Card flush>
-            <DataTable rows={data} loading={loading} onRowClick={(k) => navigate(`/complaints/${k.id}`)} columns={[
-              { key: 'number', label: 'Complaint', render: (k) => <div className="col" style={{ gap: 0 }}><Link to={`/complaints/${k.id}`} className="strong">{k.number}</Link><span className="tiny muted">{date(k.created_at)} · {k.age_days}d old</span></div> },
-              { key: 'customer', label: 'Customer', render: (k) => <div className="col" style={{ gap: 0, maxWidth: 200 }}><Link to={`/customers/${k.customer_id}`} className="truncate">{k.customer_name}</Link><span className="tiny muted">{k.city}{k.order_number ? ` · ${k.order_number}` : ''}</span></div> },
-              { key: 'product', label: 'Product', render: (k) => <div className="col" style={{ gap: 0, maxWidth: 180 }}><span className="truncate small">{k.product_name || '—'}</span>{k.serial_number && <span className="tiny muted">SN {k.serial_number}</span>}</div> },
-              { key: 'issue', label: 'Issue', render: (k) => <div className="col" style={{ gap: 0, maxWidth: 260 }}><span className="small">{labelOf(COMPLAINT_CATEGORIES, k.category)}</span><span className="tiny muted truncate">{k.description}</span></div> },
-              { key: 'severity', label: 'Severity', render: (k) => <OptionBadge list={COMPLAINT_SEVERITIES} value={k.severity} size="sm" /> },
-              { key: 'warranty', label: 'Warranty', render: (k) => <OptionBadge list={WARRANTY_STATUSES} value={k.warranty_status} size="sm" /> },
-              { key: 'status', label: 'Status', render: (k) => <OptionBadge list={COMPLAINT_STATUSES} value={k.status} /> },
-              { key: 'assigned', label: 'Technician', render: (k) => <span className="small">{k.assigned_to_name || <Badge color="amber" size="sm">Unassigned</Badge>}</span> },
-              { key: 'resolution', label: 'Resolution', render: (k) => (k.resolved_at ? <span className="small">{date(k.resolved_at)}<div className="tiny muted">{k.age_days} days{k.feedback_rating ? ` · ${'★'.repeat(k.feedback_rating)}` : ''}</div></span> : <span className="muted small">Open</span>) },
+            <DataTable rows={data} loading={!data} onRowClick={(k) => navigate(`/complaints/${k.id}`)} empty={<EmptyState icon="complaint" title="No complaints in this view" />} columns={[
+              { key: 'code', label: 'Complaint', render: (k) => <><strong>{k.code}</strong><div className="sub">received {date(k.received_date)} · {timeAgo(k.received_date)}</div></> },
+              { key: 'customer', label: 'Customer', render: (k) => <>{k.company_name}<div className="sub">{k.city}</div></> },
+              { key: 'product', label: 'Product', render: (k) => <>{k.product || '—'}{k.serial_batch && <div className="sub">SN {k.serial_batch}</div>}</> },
+              { key: 'category', label: 'Reported issue', render: (k) => k.category },
+              { key: 'sev', label: 'Severity', render: (k) => <span className="row wrap" style={{ gap: 4 }}><SeverityBadge value={k.severity} size="sm" /><WarrantyBadge value={k.warranty_status} size="sm" /></span> },
+              { key: 'status', label: 'Status', render: (k) => <Badge tone={k.open ? 'amber' : 'green'}>{k.status_label}</Badge> },
+              { key: 'owner', label: 'Owner', render: (k) => k.owner_name },
+              { key: 'next', label: 'Next response', render: (k) => (k.next_due ? <span className={k.response_overdue ? 'danger-text strong' : ''}>{date(k.next_due)}</span> : k.open ? <Badge tone="red">None set</Badge> : <span className="small muted">{k.age_days} days to resolve</span>) },
             ]} />
           </Card>
         </>
       )}
-
-      {f.tab === 'insights' && (insights.data ? <Insights data={insights.data} /> : <Spinner />)}
-
-      <ComplaintForm open={creating} onClose={() => { setCreating(false); setParams(new URLSearchParams()); }} customerId={params.get('customer')} onSaved={(id) => navigate(`/complaints/${id}`)} />
+      {f.tab === 'insights' && <Insights />}
+      <Modal open={adding} size="lg" onClose={() => setAdding(false)} title="Register complaint">
+        {adding && <NewComplaint activityId={params.get('from_activity')} customerId={params.get('customer')} orderId={params.get('order')} onSaved={(id) => navigate(`/complaints/${id}`)} />}
+      </Modal>
     </div>
   );
 }
 
-function Insights({ data }) {
+function Insights() {
+  const [from, setFrom] = useState('');
+  const { data, error, reload } = useApi('/complaints/insights', { from });
+  if (error) return <ErrorState error={error} onRetry={reload} />;
+  if (!data) return <Spinner />;
   const s = data.stats;
-  const repeated = data.by_product.filter((p) => p.repeated);
   return (
     <div className="stack">
+      <div className="row wrap"><span className="small muted">Since</span><input type="date" className="input" value={from || data.since} onChange={(e) => setFrom(e.target.value)} style={{ width: 'auto' }} aria-label="Since" /></div>
       <div className="tiles">
-        <Tile label="Complaints (12 months)" value={number(s.count)} />
-        <Tile label="Open now" value={number(s.open)} alert={s.open > 0} foot={`${number(s.critical_open)} critical`} />
-        <Tile label="Avg. resolution time" value={s.avg_resolution_days ? `${number(s.avg_resolution_days, 1)} d` : '—'} />
-        <Tile label="Avg. customer rating" value={s.avg_rating ? `${number(s.avg_rating, 1)} / 5` : '—'} />
-        <Tile label="In warranty" value={number(s.in_warranty)} foot={`of ${number(s.count)} complaints`} />
-        <Tile label="Products with repeat issues" value={number(repeated.length)} alert={repeated.length > 0} />
+        <Stat k="Complaints" v={number(s.count)} d={`${number(s.open)} open · ${number(s.critical_open || 0)} critical open`} />
+        <Stat k="Average time to resolve" v={s.avg_resolution_days === null ? '—' : `${number(s.avg_resolution_days, 1)} days`} />
+        <Stat k="Customer rating" v={s.avg_rating ? `${number(s.avg_rating, 1)} / 5` : '—'} d={`${number(s.rated)} rated`} />
+        <Stat k="Overdue responses" v={number(s.overdue_responses)} d={`${number(s.in_warranty || 0)} in warranty`} />
       </div>
-      {repeated.length > 0 && (
-        <Card title="Repeated product complaints" sub="Visible to management and the quality team" flush>
-          <DataTable rows={repeated} rowKey="id" columns={[
-            { key: 'name', label: 'Product', render: (p) => <div className="col" style={{ gap: 0 }}><strong>{p.name}</strong><span className="tiny muted">{p.sku}</span></div> },
-            { key: 'complaints', label: 'Complaints', align: 'num' },
-            { key: 'customers', label: 'Customers affected', align: 'num' },
-            { key: 'open', label: 'Still open', align: 'num' },
-            { key: 'units', label: 'Units supplied', align: 'num', render: (p) => number(p.units_sold) },
-            { key: 'rate', label: 'Per 100 units', align: 'num', render: (p) => (p.rate_per_100 === null ? '—' : number(p.rate_per_100, 1)) },
-            { key: 'cats', label: 'Issue types', render: (p) => <span className="small">{(p.categories || '').split(',').map((c) => labelOf(COMPLAINT_CATEGORIES, c)).join(', ')}</span> },
-          ]} />
-        </Card>
-      )}
       <div className="grid grid-2">
-        <Card title="Complaint trend" sub="Opened vs resolved per month">
-          <LineChart data={data.by_month} x="month" series={[{ key: 'opened', label: 'Opened' }, { key: 'resolved', label: 'Resolved' }]} />
+        <Card title="By month" sub="opened vs resolved">
+          <ColumnChart data={data.by_month} x="month" xFormat={monthLabel} series={[{ key: 'opened', label: 'Opened' }, { key: 'resolved', label: 'Resolved' }]} format="number" />
         </Card>
-        <Card title="Issue types">
-          <BarChartH data={data.by_category.map((c) => ({ ...c, label: labelOf(COMPLAINT_CATEGORIES, c.category) }))} label="label" series={[{ key: 'count', label: 'Complaints' }]} />
+        <Card title="Reported issues"><BarChartH data={data.by_category} label="category" series={[{ key: 'count', label: 'Complaints' }]} format="number" limit={10} /></Card>
+        <Card title="By product" sub="rate per 100 dispatched units where known" flush>
+          <DataTable compact rows={data.by_product} rowKey="id" columns={[
+            { key: 'p', label: 'Product', render: (x) => <span><Link to={`/products/${x.id}`}>{x.code}</Link> <span className="tiny muted">{x.name}</span> {x.repeated && <Badge size="sm" tone="red">Repeated</Badge>}</span> },
+            { key: 'c', label: 'Complaints', align: 'num', render: (x) => x.complaints },
+            { key: 'cu', label: 'Customers', align: 'num', render: (x) => x.customers },
+            { key: 'u', label: 'Units dispatched', align: 'num', render: (x) => (x.units_dispatched ? number(x.units_dispatched) : <span className="muted">unknown</span>) },
+            { key: 'r', label: 'Per 100 units', align: 'num', render: (x) => (x.rate_per_100 === null ? <span className="muted">—</span> : x.rate_per_100) },
+            { key: 'cat', label: 'Issues', render: (x) => <span className="tiny">{x.categories.join(', ')}</span> },
+          ]} empty={<div className="muted small" style={{ padding: 12 }}>No complaints with a product.</div>} />
         </Card>
+        <Card title="Confirmed root causes"><BarChartH data={data.by_cause} label="cause" series={[{ key: 'count', label: 'Complaints' }]} format="number" limit={10} /></Card>
+        {data.repeat_serials.length > 0 && (
+          <Card title="Same serial / batch more than once" flush>
+            <DataTable compact rows={data.repeat_serials} rowKey="serial_batch" columns={[{ key: 's', label: 'Serial / batch', render: (x) => <span className="mono">{x.serial_batch}</span> }, { key: 'c', label: 'Customer', render: (x) => x.company_name }, { key: 'n', label: 'Complaints', align: 'num', render: (x) => x.count }]} />
+          </Card>
+        )}
+        {data.repeat_customers.length > 0 && (
+          <Card title="Customers with repeat complaints" flush>
+            <DataTable compact rows={data.repeat_customers} columns={[{ key: 'c', label: 'Customer', render: (x) => <Link to={`/customers/${x.id}`}>{x.company_name}</Link> }, { key: 'n', label: 'Complaints', align: 'num', render: (x) => x.count }]} />
+          </Card>
+        )}
       </div>
-      {data.repeat_serials.length > 0 && (
-        <Card title="Units with more than one complaint" sub="Candidates for replacement instead of repair" flush>
-          <DataTable rows={data.repeat_serials} rowKey="serial_number" columns={[
-            { key: 'serial_number', label: 'Serial number', render: (r) => <span className="mono">{r.serial_number}</span> },
-            { key: 'count', label: 'Complaints', align: 'num' },
-            { key: 'customer_name', label: 'Customer' },
-          ]} />
-        </Card>
-      )}
+      <div className="tiny muted">{data.note}</div>
     </div>
   );
 }
 
-export function ComplaintForm({ open, onClose, onSaved, customerId }) {
-  const toast = useToast();
-  const [form, setForm] = useState({});
-  const [files, setFiles] = useState([]);
-  const [busy, setBusy] = useState(false);
-  const { data: customer } = useApi(open && form.customer_id ? `/customers/${form.customer_id}` : null);
-  const { data: products } = useApi(open ? '/products' : null);
-
+function NewComplaint({ activityId, customerId, orderId, onSaved }) {
+  const save = useSave();
+  const [f, setF] = useState({
+    customer: customerId ? { id: Number(customerId), company_name: '' } : null, contact_id: '', order_id: orderId || '', product_id: null, serial_batch: '', received_date: todayLocal(), category_code: '', severity: 'medium',
+    description: '', owner_id: null, next_response_date: '', invoice_ref: '', invoice_date: '', installation_date: '', warranty_status: '',
+  });
+  const set = (patch) => setF((x) => ({ ...x, ...patch }));
   useEffect(() => {
-    if (open) {
-      setForm({ customer_id: customerId ? Number(customerId) : '', severity: 'medium', category: 'hardware_failure' });
-      setFiles([]);
-    }
-  }, [open, customerId]);
-
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e?.target ? e.target.value : e }));
-  const save = async () => {
-    setBusy(true);
-    try {
-      const res = await api.post('/complaints', { ...form, attachment_ids: files.map((x) => x.id) });
-      toast.success('Complaint registered');
-      onSaved(res.id);
-      onClose();
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
+    if (customerId) api.get(`/customers/${customerId}`).then((p) => setF((x) => ({ ...x, customer: { id: p.customer.id, company_name: p.customer.company_name } }))).catch(() => {});
+  }, [customerId]);
+  const { data: orders } = useApi(f.customer?.id ? '/orders' : null, { customer_id: f.customer?.id, view: 'all' });
+  const { data: profile } = useApi(f.customer?.id ? `/customers/${f.customer.id}` : null);
+  const cat = useOptions('complaint_category').find((o) => o.value === f.category_code);
   return (
-    <Modal open={open} onClose={onClose} size="lg" title="Register complaint"
-      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} onClick={save}>Register</Button></>}>
+    <form className="stack-sm" onSubmit={(e) => { e.preventDefault(); save.run(async () => {
+      const r = await api.post('/complaints', { ...f, customer_id: f.customer?.id, contact_id: f.contact_id || undefined, order_id: f.order_id || undefined, warranty_status: f.warranty_status || undefined, source_activity_id: activityId || undefined });
+      onSaved(r.id);
+    }); }}>
+      <Field label="Customer" required error={save.fields.customer_id}><CustomerPicker value={f.customer} onChange={(c) => set({ customer: c, contact_id: '', order_id: '' })} allowCreate={false} onNewCustomer={() => {}} /></Field>
       <div className="form-grid">
-        <Field label="Customer" required className="full"><CustomerPicker value={form.customer_id} onChange={(id) => setForm((f) => ({ ...f, customer_id: id, contact_id: '', order_id: '' }))} /></Field>
-        <Field label="Contact person"><Select value={form.contact_id} onChange={set('contact_id')} placeholder="—" options={(customer?.contacts || []).map((c) => ({ value: c.id, label: `${c.name}${c.phone ? ` · ${c.phone}` : ''}` }))} /></Field>
-        <Field label="Related order" hint="Pulls the invoice automatically"><Select value={form.order_id} onChange={set('order_id')} placeholder="—" options={(customer?.orders || []).map((o) => ({ value: o.id, label: `${o.number} · ${date(o.order_date)}` }))} /></Field>
-        <Field label="Product"><Select value={form.product_id} onChange={set('product_id')} placeholder="—" options={(products || []).map((p) => ({ value: p.id, label: `${p.sku} — ${p.name}` }))} /></Field>
-        <Field label="Serial number"><Input value={form.serial_number} onChange={set('serial_number')} /></Field>
-        <Field label="Invoice number"><Input value={form.invoice_number} onChange={set('invoice_number')} placeholder="Auto from order" /></Field>
-        <Field label="Installation date"><Input type="date" value={form.installation_date} onChange={set('installation_date')} /></Field>
-        <Field label="Warranty status" hint="Calculated from product warranty if left blank"><Select value={form.warranty_status} onChange={set('warranty_status')} placeholder="Auto" options={WARRANTY_STATUSES} /></Field>
-        <Field label="Nature of issue"><Select value={form.category} onChange={set('category')} options={COMPLAINT_CATEGORIES} /></Field>
-        <Field label="Severity"><Select value={form.severity} onChange={set('severity')} options={COMPLAINT_SEVERITIES} /></Field>
-        <Field label="Assign to technician"><UserSelect roles={['service', 'quality']} value={form.assigned_to} onChange={set('assigned_to')} placeholder="Service team queue" /></Field>
-        <Field label="Site visit date"><Input type="date" value={form.site_visit_date} onChange={set('site_visit_date')} /></Field>
-        <Field label="Description of the problem" required className="full"><Textarea rows={3} value={form.description} onChange={set('description')} placeholder="What is the customer reporting?" /></Field>
-        <Field label="Photos / videos from site" className="full"><PendingAttachments value={files} onChange={setFiles} voice kind="photo" accept="image/*,video/*,application/pdf" /></Field>
+        <Field label="Contact" optional error={save.fields.contact_id}><Select value={f.contact_id} onChange={(e) => set({ contact_id: e.target.value })} placeholder="Who reported it" options={(profile?.contacts || []).filter((c) => c.active).map((c) => ({ value: String(c.id), label: c.name || c.phone_raw || c.email_raw }))} /></Field>
+        <Field label="Order" optional error={save.fields.order_id}><Select value={f.order_id} onChange={(e) => set({ order_id: e.target.value })} options={(orders?.rows || []).map((o) => ({ value: String(o.id), label: `${o.code} · ${date(o.received_date)}` }))} placeholder="Not known" /></Field>
+        <Field label="Product / model" optional><ProductSelect value={f.product_id} onChange={(v) => set({ product_id: v })} /></Field>
+        <Field label="Serial / batch" optional hint="Not required if the customer cannot provide it"><Input value={f.serial_batch} onChange={(e) => set({ serial_batch: e.target.value })} /></Field>
+        <Field label="Received" required error={save.fields.received_date}><Input type="date" max={todayLocal()} value={f.received_date} onChange={(e) => set({ received_date: e.target.value })} /></Field>
+        <Field label="Reported issue" required error={save.fields.category_code}><OptionSelect category="complaint_category" value={f.category_code} onChange={(v) => set({ category_code: v })} /></Field>
+        <Field label="Severity" error={save.fields.severity}><Select value={f.severity} onChange={(e) => set({ severity: e.target.value })} options={COMPLAINT_SEVERITIES} /></Field>
+        <Field label="Owner" required error={save.fields.owner_id}><UserSelect value={f.owner_id} onChange={(v) => set({ owner_id: v })} filter={(p) => ['service', 'admin', 'coordinator', 'sales', 'production'].includes(p.group)} /></Field>
+        <Field label="Short description" required className="full" error={save.fields.description}><Textarea rows={3} value={f.description} onChange={(e) => set({ description: e.target.value })} placeholder={cat?.requires_note ? 'Describe the issue' : 'What the customer reported, in their words'} /></Field>
+        <div className="form-section">Warranty</div>
+        <Field label="Invoice number" optional><Input value={f.invoice_ref} onChange={(e) => set({ invoice_ref: e.target.value })} /></Field>
+        <Field label="Invoice date" optional error={save.fields.invoice_date}><Input type="date" value={f.invoice_date} onChange={(e) => set({ invoice_date: e.target.value })} /></Field>
+        <Field label="Installation date" optional error={save.fields.installation_date}><Input type="date" value={f.installation_date} onChange={(e) => set({ installation_date: e.target.value })} /></Field>
+        <Field label="Warranty status" optional hint="Leave blank to work it out from the product warranty and these dates"><Select value={f.warranty_status} onChange={(e) => set({ warranty_status: e.target.value })} placeholder="Work it out" options={WARRANTY_STATUSES} /></Field>
+        <DateField label="Next response date" required value={f.next_response_date} onChange={(v) => set({ next_response_date: v })} error={save.fields.next_response_date} />
       </div>
-    </Modal>
+      <div className="row between"><SaveStatus save={save} /><Button type="submit" variant="primary" loading={save.saving}>Register</Button></div>
+    </form>
   );
 }

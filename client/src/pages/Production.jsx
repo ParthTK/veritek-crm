@@ -1,96 +1,75 @@
+// Production board: every active order line by broad phase, most urgent first, with its blocker, forecast
+// and how fresh the information is. Updating a card uses the same quick update as the order page.
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ORDER_STAGES, PRIORITIES, MATERIAL_STATUSES, QC_STATUSES } from '@shared/constants.js';
-import { api } from '../api.js';
+import { PRIORITIES, labelOf, toneOf } from '@shared/constants.js';
 import { useAuth } from '../auth.jsx';
 import { useApi, useUrlFilters } from '../lib/hooks.js';
-import { inrCompact, date, number, relativeDay, daysFromToday } from '../lib/format.js';
-import { Badge, Button, Card, Checkbox, DataTable, OptionBadge, PageHeader, Progress, SearchBox, Select, Tile, Spinner } from '../components/ui.jsx';
-import { useMeta } from '../components/domain.jsx';
-import { ProductionModal } from './OrderDetail.jsx';
+import { date, qty, relDay, timeAgo } from '../lib/format.js';
+import { Badge, Button, Chips, Drawer, EmptyState, ErrorState, PageHeader, Select, Spinner } from '../components/ui.jsx';
+import { LineStateBadge, useMeta } from '../components/domain.jsx';
+import { ProductionUpdateForm } from '../components/forms.jsx';
 
 export default function Production() {
-  const { can } = useAuth();
+  const { user, can } = useAuth();
   const meta = useMeta();
-  const [f, setFilter] = useUrlFilters();
-  const { data, loading, reload } = useApi('/production', f);
+  const [f, setFilter] = useUrlFilters({ factory_id: user.factory_id ? String(user.factory_id) : '' });
+  const { data, error, loading, reload } = useApi('/production/board', { factory_id: f.factory_id, priority: f.priority, state: f.state });
   const [editing, setEditing] = useState(null);
-  const canEdit = can('production.edit');
-
-  if (!data) return <Spinner />;
-  let rows = data.rows;
-  if (f.attention === '1') rows = rows.filter((o) => o.production_delayed || o.is_delayed || o.at_risk || o.material_status === 'shortage' || o.qc_status === 'failed');
-
+  if (error) return <ErrorState error={error} onRetry={reload} />;
+  const canUpdate = can('orders.update');
   return (
     <div className="stack">
-      <PageHeader title="Production tracking" subtitle="What sales needs to know about the shop floor — plan, progress, constraints and revised dates" />
-      <div className="tiles">
-        <Tile label="Orders in production" value={number(data.summary.count)} />
-        <Tile label="Delayed" value={number(data.summary.delayed)} alert={data.summary.delayed > 0} foot="Past planned completion or delivery" />
-        <Tile label="At risk" value={number(data.summary.at_risk)} foot="Completion after committed delivery" alert={data.summary.at_risk > 0} />
-        <Tile label="Material shortage" value={number(data.summary.shortage)} alert={data.summary.shortage > 0} />
-        <Tile label="Awaiting quality check" value={number(data.summary.qc_pending)} />
-        <Tile label="Due this week" value={number(data.summary.due_this_week)} />
-      </div>
-      <div className="filter-bar">
-        <SearchBox value={f.q} onChange={(q) => setFilter({ q })} placeholder="Order, PO, customer" />
-        <Select className="sm" value={f.factory_id} onChange={(e) => setFilter({ factory_id: e.target.value })} placeholder="All units" options={meta.factories.map((x) => ({ value: x.id, label: x.name }))} />
-        <Select className="sm" value={f.stage} onChange={(e) => setFilter({ stage: e.target.value })} placeholder="All stages" options={ORDER_STAGES.slice(3, 10)} />
-        <Select className="sm" value={f.priority} onChange={(e) => setFilter({ priority: e.target.value })} placeholder="Any priority" options={PRIORITIES} />
-        <Checkbox label="Needs attention" checked={f.attention === '1'} onChange={(v) => setFilter({ attention: v ? '1' : '' })} />
-      </div>
-      <Card flush>
-        <DataTable rows={rows} loading={loading} columns={[
-          { key: 'order', label: 'Order', render: (o) => (
-            <div className="col" style={{ gap: 0, maxWidth: 220 }}>
-              <Link to={`/orders/${o.id}`} className="strong">{o.number}</Link>
-              <span className="tiny muted truncate">{o.customer_name}</span>
-              <span className="tiny muted">Received {date(o.order_date)}</span>
-            </div>
-          ) },
-          { key: 'priority', label: 'Priority', render: (o) => <OptionBadge list={PRIORITIES} value={o.priority} size="sm" /> },
-          { key: 'stage', label: 'Stage', render: (o) => <OptionBadge list={ORDER_STAGES} value={o.stage} /> },
-          { key: 'items', label: 'Items', render: (o) => (
-            <div className="small" style={{ maxWidth: 240 }}>
-              {o.items.slice(0, 2).map((i) => <div key={i.id} className="truncate">{i.description} <span className="muted">× {number(i.qty)}</span></div>)}
-              {o.items.length > 2 && <div className="tiny muted">+{o.items.length - 2} more</div>}
-            </div>
-          ) },
-          { key: 'progress', label: 'Produced', render: (o) => (
-            <div style={{ minWidth: 120 }}>
-              <Progress value={o.progress_pct} tone={o.progress_pct >= 100 ? 'good' : undefined} />
-              <span className="tiny muted">{number(o.qty_produced)} / {number(o.qty_ordered)} · {o.progress_pct}%</span>
-            </div>
-          ) },
-          { key: 'plan', label: 'Completion', render: (o) => {
-            const completion = o.revised_completion || o.planned_completion;
-            return (
-              <div className="col" style={{ gap: 0 }}>
-                <span className={o.production_delayed ? 'danger-text strong' : ''}>{date(completion)}</span>
-                <span className="tiny muted">{o.actual_completion ? `done ${date(o.actual_completion)}` : completion ? relativeDay(completion) : 'not planned'}{o.revised_completion ? ' · revised' : ''}</span>
+      <PageHeader title="Production board" subtitle={data ? `${data.total} active line${data.total === 1 ? '' : 's'} · most urgent first in each phase` : 'Loading…'}
+        actions={<>
+          <Select aria-label="Factory" value={f.factory_id || ''} onChange={(e) => setFilter({ factory_id: e.target.value })} placeholder="All factories" options={meta.factories.map((x) => ({ value: String(x.id), label: x.name }))} style={{ width: 'auto' }} />
+          <Select aria-label="Priority" value={f.priority || ''} onChange={(e) => setFilter({ priority: e.target.value })} placeholder="Any priority" options={PRIORITIES} style={{ width: 'auto' }} />
+        </>} />
+      <Chips value={f.state || ''} onChange={(v) => setFilter({ state: v })} options={[
+        { value: '', label: 'All lines' }, { value: 'delayed', label: 'Delayed or at risk', tone: 'red' }, { value: 'issue', label: 'Issue reported', tone: 'amber' }, { value: 'stale', label: 'Not updated recently', tone: 'amber' },
+      ]} />
+      {f.factory_id && <div className="tiny muted">Lines without a factory are shown too, until one is assigned.</div>}
+      {!data && loading && <Spinner />}
+      {data && !data.total && <EmptyState icon="factory" title="Nothing in production here" message="No active lines match these filters." />}
+      {data && data.total > 0 && (
+        <div className="kanban">
+          {data.columns.map((col) => (
+            <div key={col.phase} className="kcol">
+              <div className="kcol-head"><strong>{col.label}</strong><span className="tiny muted">{col.lines.length} line{col.lines.length === 1 ? '' : 's'} · {col.lines.filter((l) => ['overdue', 'at_risk'].includes(l.state)).length} late or at risk</span></div>
+              <div className="kcol-body">
+                {col.lines.map((l) => (
+                  <div key={l.id} className="kcard">
+                    <div className="row between" style={{ gap: 6 }}>
+                      <Link to={`/orders/${l.order_id}`} className="strong small">{l.order_code}</Link>
+                      <span className="row" style={{ gap: 4 }}>
+                        {l.priority && l.priority !== 'normal' && <Badge size="sm" tone={toneOf(PRIORITIES, l.priority)}>{labelOf(PRIORITIES, l.priority)}</Badge>}
+                        <LineStateBadge state={l.state} daysLate={l.days_late} size="sm" />
+                      </span>
+                    </div>
+                    <div className="tiny muted truncate">{l.customer_name}</div>
+                    <div className="small mt-8"><strong>{l.product}</strong> · {qty(l.quantities.remaining, l.unit)} to go{l.quantities.ready !== null && l.quantities.ready !== undefined ? ` · ${qty(l.quantities.readyNotDispatched)} ready` : ''}</div>
+                    <div className="tiny muted">{l.work_status_label}{l.needs_clarification ? ' · specification to clarify' : ''}</div>
+                    {l.issue_label && <div className="tiny warning-text strong">{l.issue_label}{l.stage_note ? ` — ${l.stage_note}` : ''}</div>}
+                    {l.qc_summary && <div className="tiny">QC: {l.qc_summary}</div>}
+                    <div className="tiny mt-8">
+                      Promised {l.original_commitment_date ? date(l.original_commitment_date) : 'not committed'}
+                      {' · '}forecast {l.estimate_unknown ? <span className="warning-text">unknown</span> : l.forecast_dispatch_date ? relDay(l.forecast_dispatch_date) : '—'}
+                    </div>
+                    <div className="row between mt-8">
+                      <span className={`tiny ${l.stale ? 'warning-text strong' : 'muted'}`} title={l.freshness?.threshold ? `Stale after ${l.freshness.threshold} working days` : undefined}>{l.freshness?.as_of ? `Updated ${timeAgo(l.freshness.as_of)}` : 'No update yet'}{l.stale ? ' · stale' : ''}</span>
+                      {canUpdate && <Button size="xs" variant="primary" onClick={() => setEditing(l)}>Update</Button>}
+                    </div>
+                  </div>
+                ))}
+                {!col.lines.length && <div className="tiny muted" style={{ padding: 8 }}>Nothing here</div>}
               </div>
-            );
-          } },
-          { key: 'material', label: 'Material', render: (o) => (
-            <div className="col" style={{ gap: 2, maxWidth: 170 }}>
-              <OptionBadge list={MATERIAL_STATUSES} value={o.material_status} size="sm" />
-              {o.material_constraint && <span className="tiny muted truncate" title={o.material_constraint}>{o.material_constraint}</span>}
             </div>
-          ) },
-          { key: 'qc', label: 'QC', render: (o) => <OptionBadge list={QC_STATUSES} value={o.qc_status} size="sm" /> },
-          { key: 'delivery', label: 'Committed delivery', render: (o) => (
-            <div className="col" style={{ gap: 0 }}>
-              <span className={o.is_delayed ? 'danger-text strong' : daysFromToday(o.delivery_date) <= 7 ? 'warning-text' : ''}>{date(o.delivery_date)}</span>
-              {o.at_risk && <Badge size="sm" color="amber">At risk</Badge>}
-              {o.is_delayed && <span className="tiny danger-text">{o.delay_days} days late</span>}
-            </div>
-          ) },
-          can('finance.values') && { key: 'value', label: 'Value', align: 'num', render: (o) => inrCompact(o.grand_total) },
-          canEdit && { key: 'act', label: '', render: (o) => <Button size="xs" onClick={async () => setEditing(await api.get(`/orders/${o.id}`))}>Update</Button> },
-        ]} empty={<div className="empty">Nothing in production right now.</div>} />
-      </Card>
-      <div className="small muted">Delay reasons and revised dates recorded here appear on the order, in the customer tracking link, and in the order-delay report.</div>
-      {editing && <ProductionModal open onClose={() => setEditing(null)} order={editing} onSaved={reload} />}
+          ))}
+        </div>
+      )}
+      <Drawer open={Boolean(editing)} onClose={() => setEditing(null)} title={editing ? `${editing.order_code} · line ${editing.line_no}` : ''} subtitle={editing ? `${editing.product} — ${editing.customer_name}` : ''}>
+        {editing && <ProductionUpdateForm line={editing} order={{ id: editing.order_id, status: 'confirmed' }} compact onSaved={() => { setEditing(null); reload(); window.dispatchEvent(new Event('data:changed')); }} />}
+      </Drawer>
     </div>
   );
 }

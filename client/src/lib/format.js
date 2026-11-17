@@ -1,91 +1,141 @@
+// Display formatting. Instants are shown in the configured zone (default Asia/Kolkata); business dates
+// are shown as calendar dates without any time-zone conversion.
+import { localDate, daysBetween, addDays } from '@shared/dates.js';
+import { formatMoney } from '@shared/rules.js';
+
+let zone = 'Asia/Kolkata';
+let serverToday = null;
+export function setZone(tz, today) {
+  zone = tz || zone;
+  serverToday = today || null;
+}
+export const tz = () => zone;
+/** Today in the business time zone (not the browser's). */
+export const todayLocal = () => localDate(new Date(), zone) || serverToday;
+
 const isNum = (n) => n !== null && n !== undefined && n !== '' && Number.isFinite(Number(n));
 
-export function inr(n, decimals = 0) {
-  if (!isNum(n)) return '—';
-  return `₹${Number(n).toLocaleString('en-IN', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+export function date(s, { year = 'auto' } = {}) {
+  if (!s) return '—';
+  const d = String(s).slice(0, 10);
+  const dt = new Date(`${d}T12:00:00Z`);
+  if (Number.isNaN(dt.getTime())) return '—';
+  const showYear = year === true || (year === 'auto' && d.slice(0, 4) !== todayLocal().slice(0, 4));
+  return dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', ...(showYear ? { year: 'numeric' } : {}), timeZone: 'UTC' });
 }
 
-/** Indian compact currency: ₹4.2 Cr, ₹18.5 L, ₹42K. */
-export function inrCompact(n) {
-  if (!isNum(n)) return '—';
-  const v = Number(n);
-  const abs = Math.abs(v);
-  const sign = v < 0 ? '-' : '';
-  if (abs >= 1e7) return `${sign}₹${trim(abs / 1e7, abs >= 1e9 ? 0 : 2)} Cr`;
-  if (abs >= 1e5) return `${sign}₹${trim(abs / 1e5, abs >= 1e6 ? 1 : 2)} L`;
-  if (abs >= 1e3) return `${sign}₹${trim(abs / 1e3, 1)}K`;
-  return `${sign}₹${Math.round(abs)}`;
-}
-
-function trim(v, digits) {
-  return Number(v.toFixed(digits)).toLocaleString('en-IN', { maximumFractionDigits: digits });
-}
-
-export const number = (n, decimals = 0) => (isNum(n) ? Number(n).toLocaleString('en-IN', { maximumFractionDigits: decimals }) : '—');
-export const pct = (n, decimals = 1) => (isNum(n) ? `${Number(Number(n).toFixed(decimals))}%` : '—');
-
-function toDate(s) {
-  if (!s) return null;
-  const d = new Date(String(s).length === 10 ? `${s}T00:00:00` : s);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
-export function date(s) {
-  const d = toDate(s);
-  return d ? d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
-}
-export function dateShort(s) {
-  const d = toDate(s);
-  return d ? d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '—';
-}
 export function dateTime(s) {
-  const d = toDate(s);
-  return d ? d.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—';
-}
-export function monthLabel(ym) {
-  if (!ym) return '';
-  const d = new Date(`${ym}-01T00:00:00`);
-  return d.toLocaleDateString('en-IN', { month: 'short', year: '2-digit' });
+  if (!s) return '—';
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return '—';
+  const sameYear = localDate(d, zone).slice(0, 4) === todayLocal().slice(0, 4);
+  return d.toLocaleString('en-IN', { day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' }), hour: 'numeric', minute: '2-digit', timeZone: zone });
 }
 
-const pad = (n) => String(n).padStart(2, '0');
-export function todayStr() {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-export function addDaysStr(s, days) {
-  const d = toDate(s) || new Date();
-  d.setDate(d.getDate() + days);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-export function daysFromToday(s) {
-  const d = toDate(String(s).slice(0, 10));
-  if (!d) return null;
-  const t = toDate(todayStr());
-  return Math.round((d - t) / 86400000);
+export function time(s) {
+  if (!s) return '';
+  return new Date(s).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: zone });
 }
 
-/** "today", "tomorrow", "in 4 days", "3 days ago" for date-only values. */
-export function relativeDay(s) {
-  const n = daysFromToday(s);
-  if (n === null) return '—';
-  if (n === 0) return 'today';
-  if (n === 1) return 'tomorrow';
-  if (n === -1) return 'yesterday';
-  return n > 0 ? `in ${n} days` : `${-n} days ago`;
+/** "Today", "Tomorrow", "Yesterday", "3 days ago", "in 5 days" for business dates. */
+export function relDay(s) {
+  if (!s) return '—';
+  const n = daysBetween(todayLocal(), String(s).slice(0, 10));
+  if (n === 0) return 'Today';
+  if (n === 1) return 'Tomorrow';
+  if (n === -1) return 'Yesterday';
+  if (n < 0 && n > -14) return `${-n} days ago`;
+  if (n > 0 && n < 14) return `in ${n} days`;
+  return date(s);
+}
+
+export function dayCount(s) {
+  return s ? daysBetween(todayLocal(), String(s).slice(0, 10)) : null;
 }
 
 export function timeAgo(s) {
-  const d = toDate(s);
-  if (!d) return '—';
-  const mins = Math.round((Date.now() - d.getTime()) / 60000);
+  if (!s) return '—';
+  const mins = Math.round((Date.now() - new Date(s).getTime()) / 60000);
   if (mins < 1) return 'just now';
   if (mins < 60) return `${mins} min ago`;
   const hrs = Math.round(mins / 60);
   if (hrs < 24) return `${hrs} h ago`;
   const days = Math.round(hrs / 24);
-  if (days < 30) return `${days} d ago`;
-  return date(s);
+  if (days < 45) return `${days} day${days === 1 ? '' : 's'} ago`;
+  const months = Math.round(days / 30);
+  return `${months} month${months === 1 ? '' : 's'} ago`;
+}
+
+export const qty = (n, unit) => (isNum(n) ? `${Number(n).toLocaleString('en-IN', { maximumFractionDigits: 3 })}${unit && unit !== 'pcs' ? ` ${unit}` : ''}` : '—');
+export const number = (n, decimals = 0) => (isNum(n) ? Number(n).toLocaleString('en-IN', { maximumFractionDigits: decimals }) : '—');
+export const pct = (n) => (isNum(n) ? `${Number(n).toLocaleString('en-IN', { maximumFractionDigits: 1 })}%` : '—');
+export const money = (minor, currency) => formatMoney(minor, currency);
+
+/** Separate totals per currency — never summed across currencies. */
+export function moneyByCurrency(map) {
+  const parts = Object.entries(map || {}).filter(([, v]) => v).map(([c, v]) => formatMoney(v, c));
+  return parts.length ? parts.join(' + ') : '—';
+}
+
+const CURRENCY_SYMBOL = { INR: '₹', USD: '$', EUR: '€', GBP: '£', AED: 'AED ', SAR: 'SAR ' };
+const trimNum = (v, digits) => Number(v.toFixed(digits)).toLocaleString('en-IN', { maximumFractionDigits: digits });
+
+/** Short money label for charts and tiles: ₹12.5 L, ₹1.2 Cr, $45K. Input is minor units. */
+export function compactMoney(minor, currency = 'INR') {
+  if (!isNum(minor)) return '—';
+  const v = Number(minor) / 100;
+  const abs = Math.abs(v);
+  const sign = v < 0 ? '-' : '';
+  const sym = CURRENCY_SYMBOL[currency] ?? `${currency} `;
+  if (currency === 'INR') {
+    if (abs >= 1e7) return `${sign}${sym}${trimNum(abs / 1e7, 2)} Cr`;
+    if (abs >= 1e5) return `${sign}${sym}${trimNum(abs / 1e5, 2)} L`;
+  } else if (abs >= 1e6) return `${sign}${sym}${trimNum(abs / 1e6, 2)}M`;
+  if (abs >= 1e3) return `${sign}${sym}${trimNum(abs / 1e3, 1)}K`;
+  return `${sign}${sym}${Math.round(abs)}`;
+}
+
+/** Per-currency totals in compact form, never summed across currencies. */
+export function compactByCurrency(map) {
+  const parts = Object.entries(map || {}).filter(([, v]) => v).map(([c, v]) => compactMoney(v, c));
+  return parts.length ? parts.join(' + ') : '—';
+}
+
+export const monthLabel = (ym) => {
+  if (!ym) return '—';
+  const d = new Date(`${String(ym).slice(0, 7)}-01T12:00:00Z`);
+  return Number.isNaN(d.getTime()) ? ym : d.toLocaleDateString('en-IN', { month: 'short', year: '2-digit', timeZone: 'UTC' });
+};
+
+/**
+ * Chart/tooltip value formatting. `money` (minor units, INR) or `money:USD`; `pct`; `days`; `number`.
+ */
+export function formatValue(value, format) {
+  if (typeof format === 'string' && format.startsWith('money')) return compactMoney(value, format.split(':')[1] || 'INR');
+  switch (format) {
+    case 'number': return number(value);
+    case 'decimal': return number(value, 1);
+    case 'pct': return pct(value);
+    case 'days': return isNum(value) ? `${number(value)} d` : '—';
+    case 'date': return date(value);
+    case 'month': return monthLabel(value);
+    default: return value ?? '—';
+  }
+}
+
+/** Builds and downloads a CSV in the browser. columns: [{ key, label }] (key may be a function). */
+export function downloadCsv(filename, columns, rows) {
+  const esc = (v) => {
+    const s = v === null || v === undefined ? '' : String(v);
+    return /[",\n\r]/.test(s) || /^[=+\-@]/.test(s) ? `"${(/^[=+\-@]/.test(s) ? `'${s}` : s).replace(/"/g, '""')}"` : s;
+  };
+  const lines = [columns.map((c) => esc(c.label)).join(','), ...rows.map((r) => columns.map((c) => esc(typeof c.key === 'function' ? c.key(r) : r[c.key])).join(','))];
+  const blob = new Blob([`﻿${lines.join('\r\n')}`], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
 }
 
 export function fileSize(bytes) {
@@ -99,32 +149,11 @@ export function initials(name = '') {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0].toUpperCase()).join('');
 }
 
-export function formatValue(value, format) {
-  switch (format) {
-    case 'currency': return inrCompact(value);
-    case 'currency_full': return inr(value);
-    case 'number': return number(value);
-    case 'decimal': return number(value, 1);
-    case 'pct': return pct(value);
-    case 'days': return isNum(value) ? `${number(value)} d` : '—';
-    case 'multiple': return isNum(value) ? `${number(value, 1)}×` : '—';
-    case 'date': return date(value);
-    case 'month': return monthLabel(value);
-    case 'bool': return value ? 'Yes' : 'No';
-    default: return value ?? '—';
-  }
+/** Local datetime-input value ("YYYY-MM-DDTHH:MM") for an instant, in the business zone. */
+export function toLocalInput(instant = new Date()) {
+  const d = new Date(instant);
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(d).map((p) => [p.type, p.value]));
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
 }
 
-export function downloadCsv(filename, columns, rows) {
-  const esc = (v) => {
-    const s = v === null || v === undefined ? '' : String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const lines = [columns.map((c) => esc(c.label)).join(','), ...rows.map((r) => columns.map((c) => esc(c.csv ? c.csv(r) : r[c.key])).join(','))];
-  const blob = new Blob([`﻿${lines.join('\n')}`], { type: 'text/csv;charset=utf-8' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = filename;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-}
+export { addDays };

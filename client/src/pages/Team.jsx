@@ -1,264 +1,228 @@
-import { useState } from 'react';
+// Team & approvals: quotation approvals waiting for a decision, monthly sales targets against confirmed
+// orders, performance shown with workload, and who is on the team.
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ROLES, labelOf } from '@shared/constants.js';
+import { fromMinor } from '@shared/rules.js';
 import { api } from '../api.js';
 import { useAuth } from '../auth.jsx';
-import { useApi, useUrlFilters } from '../lib/hooks.js';
-import { inrCompact, number, pct, date, timeAgo, monthLabel } from '../lib/format.js';
-import { Badge, Button, Card, DataTable, Field, Input, Modal, PageHeader, Select, Spinner, Tabs, Textarea, useToast, EmptyState, Progress, Checkbox } from '../components/ui.jsx';
+import { useApi, useSave, useUrlFilters } from '../lib/hooks.js';
+import { compactByCurrency, compactMoney, date, dateTime, monthLabel, number, pct, timeAgo, todayLocal, addDays } from '../lib/format.js';
+import {
+  Badge, Button, Card, Chips, DataTable, EmptyState, ErrorState, Field, Input, Modal, Notice, PageHeader, SaveStatus, Spinner, Tabs, Textarea,
+} from '../components/ui.jsx';
+import { Money } from '../components/domain.jsx';
 import { ColumnChart } from '../components/charts.jsx';
-import { useMeta, UserSelect } from '../components/domain.jsx';
 
 export default function Team() {
-  const { can, user } = useAuth();
-  const [f, setFilter] = useUrlFilters({ tab: 'approvals' });
-  const approvals = useApi(f.tab === 'approvals' ? '/approvals' : null, { status: f.astatus || 'pending' });
-  const users = useApi(['members', 'performance'].includes(f.tab) ? '/users' : null);
-  const targets = useApi(f.tab === 'targets' ? '/targets' : null);
-  const [editing, setEditing] = useState(null);
-
+  const { can } = useAuth();
+  const [f, setFilter] = useUrlFilters({ tab: can('quotes.approve') ? 'approvals' : 'performance' });
+  const tabs = [
+    can('quotes.view') && { key: 'approvals', label: 'Approvals' },
+    { key: 'performance', label: 'Performance' },
+    can('values.view') && { key: 'targets', label: 'Targets' },
+    { key: 'members', label: 'Members' },
+  ].filter(Boolean);
   return (
     <div className="stack">
-      <PageHeader title="Team & approvals" subtitle="Approval queue, users, access scope and monthly targets"
-        actions={can('team.edit') && f.tab === 'members' && <Button variant="primary" icon="plus" onClick={() => setEditing({})}>Add user</Button>} />
-      <Tabs value={f.tab} onChange={(tab) => setFilter({ tab })} tabs={[
-        { key: 'approvals', label: 'Approvals', count: approvals.data?.filter((a) => a.status === 'pending').length },
-        { key: 'members', label: 'Team members' },
-        { key: 'targets', label: 'Targets' },
-        { key: 'performance', label: 'Performance' },
-      ]} />
-
-      {f.tab === 'approvals' && <Approvals data={approvals} filter={f} setFilter={setFilter} />}
-      {f.tab === 'members' && (
-        <Card flush>
-          <DataTable rows={users.data} loading={users.loading} columns={[
-            { key: 'name', label: 'Name', render: (u) => <div className="col" style={{ gap: 0 }}><span className="strong">{u.name}</span><span className="tiny muted">{u.email}</span></div> },
-            { key: 'role', label: 'Role', render: (u) => <div className="col" style={{ gap: 2 }}><Badge>{labelOf(ROLES, u.role)}</Badge><span className="tiny muted">{u.designation}</span></div> },
-            { key: 'scope', label: 'Access scope', render: (u) => <span className="small">{u.region_name || u.factory_name || 'All regions'}{u.branch ? <div className="tiny muted">{u.branch}</div> : null}</span> },
-            { key: 'manager', label: 'Reports to', render: (u) => <span className="small">{u.manager_name || '—'}</span> },
-            { key: 'customers', label: 'Customers', align: 'num', render: (u) => number(u.customers) },
-            { key: 'leads', label: 'Open leads', align: 'num', render: (u) => number(u.open_leads) },
-            { key: 'overdue', label: 'Overdue follow-ups', align: 'num', render: (u) => (u.overdue_followups ? <span className="pill-count red">{u.overdue_followups}</span> : <span className="muted">0</span>) },
-            { key: 'active', label: 'Status', render: (u) => <Badge color={u.active ? 'green' : 'slate'}>{u.active ? 'Active' : 'Disabled'}</Badge> },
-            { key: 'login', label: 'Last sign-in', render: (u) => <span className="small muted">{u.last_login_at ? timeAgo(u.last_login_at) : 'Never'}</span> },
-            can('team.edit') && { key: 'act', label: '', render: (u) => <div className="row"><Button size="xs" icon="edit" onClick={() => setEditing(u)} aria-label="Edit user" />{u.id !== user.id && <Button size="xs" variant="ghost" onClick={() => setEditing({ ...u, transfer: true })}>Transfer</Button>}</div> },
-          ]} />
-        </Card>
-      )}
-      {f.tab === 'targets' && <Targets data={targets} />}
-      {f.tab === 'performance' && <Performance users={users.data} />}
-
-      {editing && (editing.transfer
-        ? <TransferModal user={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); users.reload(); }} />
-        : <UserModal user={editing.id ? editing : null} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); users.reload(); }} />)}
+      <PageHeader title="Team & approvals" subtitle="Approvals waiting for a decision, targets against confirmed orders, and performance shown with workload" />
+      <Tabs value={f.tab} onChange={(tab) => setFilter({ tab })} tabs={tabs} />
+      {f.tab === 'approvals' && <Approvals />}
+      {f.tab === 'performance' && <Performance />}
+      {f.tab === 'targets' && <Targets />}
+      {f.tab === 'members' && <Members />}
     </div>
   );
 }
 
-function Approvals({ data, filter, setFilter }) {
-  const toast = useToast();
+// ------------------------------------------------------------------ approvals
+function Approvals() {
+  const [status, setStatus] = useState('pending');
+  const { data, error, loading, reload } = useApi('/approvals', { status });
   const [decide, setDecide] = useState(null);
-  const rows = data.data;
+  if (error) return <ErrorState error={error} onRetry={reload} />;
   return (
     <div className="stack">
-      <div className="filter-bar">
-        <Select className="sm" value={filter.astatus || 'pending'} onChange={(e) => setFilter({ astatus: e.target.value })} options={[
-          { value: 'pending', label: 'Pending' }, { value: 'approved', label: 'Approved' }, { value: 'rejected', label: 'Rejected' }, { value: 'all', label: 'All' },
-        ]} />
-      </div>
+      <Chips value={status} onChange={setStatus} options={[{ value: 'pending', label: 'Waiting for a decision', count: status === 'pending' ? data?.length : undefined }, { value: 'approved', label: 'Approved' }, { value: 'rejected', label: 'Rejected' }, { value: 'all', label: 'All' }]} />
       <Card flush>
-        <DataTable rows={rows} loading={data.loading} empty={<EmptyState icon="check" title="No approvals waiting" message="Quotations within the discount and margin policy approve automatically." />} columns={[
-          { key: 'number', label: 'Quotation', render: (a) => <div className="col" style={{ gap: 0 }}><Link to={`/quotations/${a.quotation_id}`} className="strong">{a.number}</Link><span className="tiny muted">v{a.version_no} · {a.subject}</span></div> },
-          { key: 'customer', label: 'Customer', render: (a) => <div className="col" style={{ gap: 0 }}><span>{a.customer_name}</span><span className="tiny muted">{a.region_name}</span></div> },
-          { key: 'value', label: 'Value', align: 'num', render: (a) => (a.amount === undefined ? '—' : inrCompact(a.amount)) },
-          { key: 'discount', label: 'Discount', align: 'num', render: (a) => <span className="warning-text">{pct(a.discount_pct)}</span> },
-          { key: 'margin', label: 'Margin', align: 'num', render: (a) => (a.margin_pct === undefined ? '—' : a.margin_pct === null ? '—' : <span className={a.margin_pct < 22 ? 'danger-text' : ''}>{pct(a.margin_pct)}</span>) },
-          { key: 'reasons', label: 'Why approval is needed', render: (a) => <span className="small">{a.reasons.join('; ')}{a.below_min_price ? <Badge size="sm" color="red">Below min price</Badge> : null}</span> },
-          { key: 'role', label: 'Level', render: (a) => <Badge color="amber" size="sm">{labelOf(ROLES, a.required_role)}</Badge> },
-          { key: 'requested', label: 'Requested', render: (a) => <span className="small">{a.requested_by_name}<div className="tiny muted">{date(a.requested_at)}</div></span> },
-          { key: 'status', label: 'Status', render: (a) => (a.status === 'pending'
-            ? (a.can_decide ? <div className="row"><Button size="xs" variant="primary" onClick={() => setDecide({ a, decision: 'approved' })}>Approve</Button><Button size="xs" variant="danger-ghost" onClick={() => setDecide({ a, decision: 'rejected' })}>Reject</Button></div> : <Badge color="amber">Pending</Badge>)
-            : <div className="col" style={{ gap: 0 }}><Badge color={a.status === 'approved' ? 'green' : 'red'}>{a.status}</Badge><span className="tiny muted">{a.decided_by_name}</span></div>) },
-        ]} />
+        <DataTable rows={data} loading={loading} columns={[
+          { key: 'q', label: 'Quotation', render: (a) => <div className="col" style={{ gap: 0 }}><Link to={`/quotations/${a.quotation_id}`} className="strong">{a.number} rev {a.revision_no}</Link><span className="tiny muted">{a.company_name}{a.region_name ? ` · ${a.region_name}` : ''}</span></div> },
+          { key: 'v', label: 'Value (pre-GST)', align: 'num', render: (a) => <Money minor={a.total_minor} currency={a.currency} /> },
+          { key: 'd', label: 'Discount', align: 'num', render: (a) => pct(a.discount_pct) },
+          { key: 'm', label: 'Margin', align: 'num', render: (a) => (a.margin_pct === undefined ? <span className="muted">Hidden</span> : a.margin_pct === null ? '—' : pct(a.margin_pct)) },
+          { key: 'why', label: 'Why approval is needed', render: (a) => <div className="small" style={{ maxWidth: 360 }}>{a.reasons.join(' · ')}{a.comments && <div className="muted">“{a.comments}”</div>}</div> },
+          { key: 'who', label: 'Needs', render: (a) => <Badge size="sm" tone="violet">{a.required_role_label}</Badge> },
+          { key: 'when', label: 'Requested', render: (a) => <span className="small">{a.requested_by_name}<div className="tiny muted">{timeAgo(a.requested_at)}</div></span> },
+          { key: 'st', label: 'Status', render: (a) => (a.status === 'pending' ? (a.can_decide
+            ? <div className="row"><Button size="xs" variant="primary" onClick={() => setDecide({ a, decision: 'approved' })}>Approve</Button><Button size="xs" variant="danger-ghost" onClick={() => setDecide({ a, decision: 'rejected' })}>Reject</Button></div>
+            : <span className="small muted">Waiting for {a.required_role_label}</span>)
+            : <span className="small"><Badge size="sm" tone={a.status === 'approved' ? 'green' : a.status === 'rejected' ? 'red' : 'slate'}>{a.status}</Badge><div className="tiny muted">{a.decided_by_name} {a.decided_at ? dateTime(a.decided_at) : ''}</div></span>) },
+        ]} empty={<EmptyState icon="shield" title={status === 'pending' ? 'Nothing waiting' : 'No approvals'} message={status === 'pending' ? 'Quotations outside the discount or margin policy appear here.' : undefined} />} />
       </Card>
-      <Modal open={Boolean(decide)} onClose={() => setDecide(null)} size="sm" title={decide?.decision === 'approved' ? 'Approve quotation' : 'Reject quotation'}
-        subtitle={decide ? `${decide.a.number} · ${decide.a.customer_name}` : ''}
-        footer={<><Button onClick={() => setDecide(null)}>Cancel</Button><Button variant={decide?.decision === 'approved' ? 'primary' : 'danger'} onClick={async () => {
-          try {
-            await api.post(`/approvals/${decide.a.id}/decide`, { decision: decide.decision, comments: decide.comments });
-            toast.success('Decision recorded');
-            setDecide(null);
-            data.reload();
-          } catch (err) {
-            toast.error(err.message);
-          }
-        }}>{decide?.decision === 'approved' ? 'Approve' : 'Reject'}</Button></>}>
-        <div className="stack">
-          <div className="small muted">{decide?.a.reasons.join('; ')}</div>
-          <Field label="Comments" required={decide?.decision === 'rejected'}>
-            <Textarea rows={3} value={decide?.comments || ''} onChange={(e) => setDecide((d) => ({ ...d, comments: e.target.value }))} />
-          </Field>
-        </div>
+      <Modal open={Boolean(decide)} size="sm" onClose={() => setDecide(null)} title={decide?.decision === 'approved' ? `Approve ${decide?.a.number}` : `Reject ${decide?.a.number}`}>
+        {decide && <DecideForm a={decide.a} decision={decide.decision} onSaved={() => { setDecide(null); reload(); window.dispatchEvent(new Event('data:changed')); }} />}
       </Modal>
     </div>
   );
 }
 
-function Targets({ data }) {
-  const toast = useToast();
-  const { can, user } = useAuth();
-  const [edits, setEdits] = useState({});
-  const [busy, setBusy] = useState(false);
-  const editable = ['super_admin', 'management', 'sales_head'].includes(user.role);
-  if (!data.data) return <Spinner />;
-  const { months, users } = data.data;
-  const value = (u, m) => (edits[`${u.id}:${m}`] !== undefined ? edits[`${u.id}:${m}`] : u.targets[m]);
-
-  const save = async () => {
-    setBusy(true);
-    try {
-      await api.put('/targets', { entries: Object.entries(edits).map(([k, v]) => ({ user_id: Number(k.split(':')[0]), month: k.split(':')[1], amount: Number(v) || 0 })) });
-      toast.success('Targets saved');
-      setEdits({});
-      data.reload();
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
+function DecideForm({ a, decision, onSaved }) {
+  const save = useSave();
+  const [comments, setComments] = useState('');
   return (
-    <Card title="Monthly sales targets" sub="Order value excluding GST" actions={editable && Object.keys(edits).length > 0 && <Button variant="primary" loading={busy} onClick={save}>Save {Object.keys(edits).length} changes</Button>} flush>
-      <div className="table-wrap">
-        <table className="table compact">
-          <thead>
-            <tr>
-              <th style={{ minWidth: 150 }}>Salesperson</th>
-              {months.map((m) => <th key={m} className="num">{monthLabel(m)}</th>)}
-              <th className="num">Year total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((u) => {
-              const total = months.reduce((s, m) => s + Number(value(u, m) || 0), 0);
-              const achieved = months.reduce((s, m) => s + (u.achieved[m] || 0), 0);
-              return (
-                <tr key={u.id}>
-                  <td><div className="col" style={{ gap: 0 }}><span className="strong">{u.name}</span><span className="tiny muted">{u.region_name}</span></div></td>
-                  {months.map((m) => (
-                    <td key={m} className="num">
-                      {editable ? (
-                        <input className="input sm num" style={{ width: 92 }} type="number" min="0" step="50000" value={value(u, m) ?? 0}
-                          onChange={(e) => setEdits((s) => ({ ...s, [`${u.id}:${m}`]: e.target.value }))} />
-                      ) : inrCompact(u.targets[m])}
-                      <div className="tiny muted">{u.achieved[m] ? inrCompact(u.achieved[m]) : '—'}</div>
-                    </td>
-                  ))}
-                  <td className="num">
-                    <strong>{inrCompact(total)}</strong>
-                    <div className="tiny muted">{inrCompact(achieved)} achieved</div>
-                    <Progress value={total ? (achieved / total) * 100 : 0} />
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      <div className="small muted" style={{ padding: 12 }}>Grey figures under each target are the achieved order value for that month.</div>
-    </Card>
+    <form className="stack-sm" onSubmit={(e) => { e.preventDefault(); save.run(async () => { await api.post(`/approvals/${a.id}/decide`, { decision, comments }); onSaved(); }); }}>
+      <div className="small">{a.company_name} · <Money minor={a.total_minor} currency={a.currency} /> · {a.reasons.join('; ')}</div>
+      <Field label={decision === 'approved' ? 'Comment' : 'Reason for rejecting'} required={decision === 'rejected'} optional={decision === 'approved'} error={save.fields.comments}>
+        <Textarea rows={3} value={comments} onChange={(e) => setComments(e.target.value)} maxLength={500} />
+      </Field>
+      <div className="row between"><SaveStatus save={save} /><Button type="submit" variant={decision === 'approved' ? 'primary' : 'danger'} loading={save.saving}>{decision === 'approved' ? 'Approve' : 'Reject'}</Button></div>
+    </form>
   );
 }
 
-function Performance({ users }) {
-  const { data } = useApi('/dashboard', { period: 'fy' });
-  if (!data || !users) return <Spinner />;
-  const rows = data.salespeople || [];
+// ------------------------------------------------------------------ performance
+function Performance() {
+  const { can } = useAuth();
+  const [range, setRange] = useState({ from: addDays(todayLocal(), -89), to: todayLocal() });
+  const { data, error, loading, reload } = useApi('/team/performance', range);
+  const values = can('values.view');
+  if (error) return <ErrorState error={error} onRetry={reload} />;
   return (
     <div className="stack">
-      <Card title="Financial year performance" sub="Order value excluding GST against target">
-        <ColumnChart data={rows} x="name" format="currency" height={260} series={[{ key: 'won_value', label: 'Achieved' }]} target={{ key: 'target', label: 'Target' }} />
-      </Card>
-      <Card flush>
-        <DataTable rows={rows} columns={[
-          { key: 'name', label: 'Salesperson', render: (p) => <div className="col" style={{ gap: 0 }}><span className="strong">{p.name}</span><span className="tiny muted">{p.region} · {labelOf(ROLES, p.role)}</span></div> },
-          { key: 'leads', label: 'Leads', align: 'num' },
-          { key: 'open_leads', label: 'Open', align: 'num' },
-          { key: 'pipeline', label: 'Pipeline', align: 'num', render: (p) => inrCompact(p.pipeline_value) },
-          { key: 'quotes', label: 'Quotes sent', align: 'num', render: (p) => p.quotes_sent },
-          { key: 'orders', label: 'Orders', align: 'num' },
-          { key: 'revenue', label: 'Revenue', align: 'num', render: (p) => <strong>{inrCompact(p.won_value)}</strong> },
-          { key: 'target', label: 'Target', align: 'num', render: (p) => inrCompact(p.target) },
-          { key: 'ach', label: 'Achievement', render: (p) => (p.target ? <div className="row"><div className="grow"><Progress value={p.achievement_pct} tone={p.achievement_pct >= 100 ? 'good' : p.achievement_pct >= 70 ? 'warn' : 'bad'} /></div><span className="small num">{p.achievement_pct}%</span></div> : '—') },
-          { key: 'conv', label: 'Win rate', align: 'num', render: (p) => (p.conversion_pct === null ? '—' : pct(p.conversion_pct, 0)) },
-          { key: 'overdue', label: 'Overdue F/U', align: 'num', render: (p) => (p.overdue_followups ? <span className="pill-count red">{p.overdue_followups}</span> : '0') },
-        ]} />
-      </Card>
+      <div className="filter-bar">
+        <span className="small muted">From</span><input type="date" className="input" value={range.from} onChange={(e) => setRange({ ...range, from: e.target.value })} aria-label="From" style={{ width: 'auto' }} />
+        <span className="small muted">to</span><input type="date" className="input" value={range.to} onChange={(e) => setRange({ ...range, to: e.target.value })} aria-label="To" style={{ width: 'auto' }} />
+      </div>
+      {!data && loading && <Spinner />}
+      {data && (
+        <Card title="Outcomes with workload" sub={`${date(data.from)} – ${date(data.to)}`} flush>
+          <DataTable rows={data.rows} columns={[
+            { key: 'n', label: 'Person', render: (p) => <div className="col" style={{ gap: 0 }}><strong>{p.name}</strong><span className="tiny muted">{[p.role_label, p.region_name].filter(Boolean).join(' · ')}</span></div> },
+            { key: 'w', label: 'Workload now', render: (p) => <span className="small">{p.workload.open_enquiries} open enquiries · {p.workload.customers} customers · {p.workload.open_tasks} tasks{p.workload.overdue_tasks ? <span className="danger-text strong"> ({p.workload.overdue_tasks} overdue)</span> : ''}</span> },
+            { key: 'e', label: 'Enquiries', align: 'num', render: (p) => number(p.enquiries_received) },
+            { key: 'q', label: 'Quotes issued', align: 'num', render: (p) => number(p.quotes_issued) },
+            { key: 'wl', label: 'Won / lost', align: 'num', render: (p) => `${p.won} / ${p.lost}` },
+            { key: 'wr', label: 'Win rate', align: 'num', render: (p) => (p.win_rate_pct === null ? '—' : pct(p.win_rate_pct)) },
+            { key: 'o', label: 'Orders', align: 'num', render: (p) => number(p.orders) },
+            values && { key: 'v', label: 'Order value', align: 'num', render: (p) => compactByCurrency(p.order_value_by_currency) },
+            { key: 'c', label: 'Contacts logged', align: 'num', render: (p) => number(p.contacts_logged) },
+            { key: 't', label: 'Tasks on time', align: 'num', render: (p) => (p.tasks_on_time_pct === null ? '—' : `${pct(p.tasks_on_time_pct)} of ${p.tasks_done}`) },
+          ]} empty={<EmptyState title="No salespeople in your view" />} />
+          <div className="tiny muted" style={{ padding: '8px 14px' }}>{data.note}</div>
+        </Card>
+      )}
     </div>
   );
 }
 
-function UserModal({ user, onClose, onSaved }) {
-  const toast = useToast();
-  const meta = useMeta();
-  const [form, setForm] = useState(user || { role: 'sales_executive', active: 1 });
-  const [busy, setBusy] = useState(false);
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e?.target ? e.target.value : e }));
-  const save = async () => {
-    setBusy(true);
-    try {
-      if (user?.id) await api.put(`/users/${user.id}`, form);
-      else await api.post('/users', form);
-      toast.success('User saved');
-      onSaved();
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setBusy(false);
-    }
-  };
+// ------------------------------------------------------------------ targets
+function Targets() {
+  const { can } = useAuth();
+  const { data, error, reload } = useApi('/team/targets');
+  const [editing, setEditing] = useState(false);
+  const [selected, setSelected] = useState(null);
+  if (error) return <ErrorState error={error} onRetry={reload} />;
+  if (!data) return <Spinner />;
+  const cur = data.currency;
+  const totals = data.months.map((m) => ({
+    month: m,
+    target: data.users.reduce((s, u) => s + (u.targets[m] || 0), 0),
+    achieved: data.users.reduce((s, u) => s + (u.achieved[m] || 0), 0),
+  }));
+  const person = data.users.find((u) => u.id === selected);
+  const chart = person ? data.months.map((m) => ({ month: m, target: person.targets[m] || 0, achieved: person.achieved[m] || 0 })) : totals;
   return (
-    <Modal open onClose={onClose} title={user?.id ? `Edit ${user.name}` : 'Add team member'}
-      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} onClick={save}>Save</Button></>}>
-      <div className="form-grid">
-        <Field label="Name" required><Input value={form.name} onChange={set('name')} /></Field>
-        <Field label="Email" required><Input type="email" value={form.email} onChange={set('email')} /></Field>
-        <Field label="Role" required hint="Controls modules and data access"><Select value={form.role} onChange={set('role')} options={ROLES} /></Field>
-        <Field label="Designation"><Input value={form.designation} onChange={set('designation')} /></Field>
-        <Field label="Region" hint="Regional managers see only their region"><Select value={form.region_id} onChange={set('region_id')} placeholder="All regions" options={meta.regions.map((r) => ({ value: r.id, label: r.name }))} /></Field>
-        <Field label="Factory / unit" hint="Production sees only their unit"><Select value={form.factory_id} onChange={set('factory_id')} placeholder="All units" options={meta.factories.map((x) => ({ value: x.id, label: x.name }))} /></Field>
-        <Field label="Branch"><Input value={form.branch} onChange={set('branch')} /></Field>
-        <Field label="Phone"><Input value={form.phone} onChange={set('phone')} /></Field>
-        <Field label="Reports to"><UserSelect value={form.manager_id} onChange={set('manager_id')} placeholder="—" /></Field>
-        <Field label={user?.id ? 'Reset password' : 'Initial password'} required={!user?.id} hint="At least 8 characters"><Input type="text" value={form.password} onChange={set('password')} placeholder={user?.id ? 'Leave blank to keep current' : ''} /></Field>
-        {user?.id && <Checkbox label="Account active" checked={form.active !== 0} onChange={(v) => setForm((f) => ({ ...f, active: v ? 1 : 0 }))} />}
+    <div className="stack">
+      <Card title={person ? `${person.name}: target vs achievement` : 'Team target vs achievement'} sub={`${cur} · financial year`}
+        actions={<>{person && <Button size="sm" onClick={() => setSelected(null)}>Whole team</Button>}{can('targets.edit') && <Button size="sm" variant="primary" icon="edit" onClick={() => setEditing(true)}>Set targets</Button>}</>}>
+        <ColumnChart data={chart} x="month" xFormat={monthLabel} series={[{ key: 'achieved', label: 'Confirmed orders' }]} target={{ key: 'target', label: 'Target' }} format={`money:${cur}`} />
+        <div className="tiny muted mt-8">{data.note}{Object.keys(data.other_currencies).length ? ` Other currencies this year: ${compactByCurrency(data.other_currencies)}.` : ''}</div>
+      </Card>
+      <Card title="By person" flush>
+        <div className="table-wrap">
+          <table className="table compact">
+            <thead><tr><th>Person</th>{data.months.map((m) => <th key={m} className="num">{monthLabel(m)}</th>)}<th className="num">Year</th></tr></thead>
+            <tbody>
+              {data.users.map((u) => {
+                const t = Object.values(u.targets).reduce((s, v) => s + (v || 0), 0);
+                const a = Object.values(u.achieved).reduce((s, v) => s + (v || 0), 0);
+                return (
+                  <tr key={u.id} className="clickable" onClick={() => setSelected(u.id)}>
+                    <td><strong>{u.name}</strong><div className="sub">{[u.role_label, u.region_name].filter(Boolean).join(' · ')}</div></td>
+                    {data.months.map((m) => (
+                      <td key={m} className="num small">
+                        <div>{u.achieved[m] ? compactMoney(u.achieved[m], cur) : '—'}</div>
+                        <div className="tiny muted">{u.targets[m] ? `of ${compactMoney(u.targets[m], cur)}` : ''}</div>
+                      </td>
+                    ))}
+                    <td className="num"><strong>{compactMoney(a, cur)}</strong><div className="tiny muted">{t ? `${Math.round((a / t) * 100)}% of ${compactMoney(t, cur)}` : 'no target'}</div></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+      {editing && <TargetsEditor data={data} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); reload(); }} />}
+    </div>
+  );
+}
+
+function TargetsEditor({ data, onClose, onSaved }) {
+  const save = useSave();
+  const initial = useMemo(() => Object.fromEntries(data.users.flatMap((u) => data.months.map((m) => [`${u.id}|${m}`, u.targets[m] ? fromMinor(u.targets[m]) : '']))), [data]);
+  const [grid, setGrid] = useState(initial);
+  useEffect(() => setGrid(initial), [initial]);
+  const fill = (userId) => {
+    const first = data.months.map((m) => grid[`${userId}|${m}`]).find((v) => v !== '');
+    if (first === undefined) return;
+    setGrid((g) => ({ ...g, ...Object.fromEntries(data.months.map((m) => [`${userId}|${m}`, g[`${userId}|${m}`] || first])) }));
+  };
+  const submit = () => save.run(async () => {
+    const entries = Object.entries(grid).filter(([k, v]) => v !== initial[k]).map(([k, v]) => {
+      const [user_id, month] = k.split('|');
+      return { user_id: Number(user_id), month, amount: v };
+    });
+    await api.put('/team/targets', { currency: data.currency, entries });
+    onSaved();
+  });
+  return (
+    <Modal open size="xl" onClose={onClose} title={`Monthly targets (${data.currency}, before tax)`} subtitle="Blank means no target for that month. “Fill” copies the first value across the empty months."
+      footer={<><SaveStatus save={save} /><Button onClick={onClose}>Cancel</Button><Button variant="primary" loading={save.saving} onClick={submit}>Save targets</Button></>}>
+      {Object.keys(save.fields).length > 0 && <Notice tone="danger">Some amounts are not valid numbers.</Notice>}
+      <div className="table-wrap">
+        <table className="table compact">
+          <thead><tr><th>Person</th>{data.months.map((m) => <th key={m}>{monthLabel(m)}</th>)}<th /></tr></thead>
+          <tbody>{data.users.map((u) => (
+            <tr key={u.id}>
+              <td className="nowrap"><strong>{u.name}</strong></td>
+              {data.months.map((m) => <td key={m}><Input inputMode="decimal" value={grid[`${u.id}|${m}`]} onChange={(e) => setGrid({ ...grid, [`${u.id}|${m}`]: e.target.value })} style={{ minWidth: 90 }} aria-label={`${u.name} ${monthLabel(m)}`} /></td>)}
+              <td><Button size="xs" onClick={() => fill(u.id)}>Fill</Button></td>
+            </tr>
+          ))}</tbody>
+        </table>
       </div>
     </Modal>
   );
 }
 
-function TransferModal({ user, onClose, onSaved }) {
-  const toast = useToast();
-  const [to, setTo] = useState('');
-  const [result, setResult] = useState(null);
+// ------------------------------------------------------------------ members
+function Members() {
+  const { data, error, reload } = useApi('/team/members');
+  const { can } = useAuth();
+  if (error) return <ErrorState error={error} onRetry={reload} />;
+  if (!data) return <Spinner />;
   return (
-    <Modal open onClose={onClose} size="sm" title={`Transfer ${user.name}'s work`}
-      footer={<><Button onClick={onClose}>Close</Button><Button variant="primary" disabled={!to} onClick={async () => {
-        try {
-          const r = await api.post(`/users/${user.id}/transfer`, { to_user_id: to });
-          setResult(r);
-          toast.success('Work transferred');
-          onSaved();
-        } catch (err) {
-          toast.error(err.message);
-        }
-      }}>Transfer</Button></>}>
-      <div className="stack">
-        <div className="small muted">Moves open leads, customers, pending follow-ups and live quotations to another salesperson.</div>
-        <Field label="Transfer to"><UserSelect value={to} onChange={(e) => setTo(e.target.value)} placeholder="Select…" /></Field>
-        {result && <div className="info-box small">Moved {result.leads} leads, {result.customers} customers, {result.followups} follow-ups and {result.quotations} quotations.</div>}
-      </div>
-    </Modal>
+    <Card title="People" sub={`${data.filter((u) => u.active).length} active`} actions={can('users.manage') && <Button size="sm" to="/settings?tab=users">Manage users</Button>} flush>
+      <DataTable rows={data} columns={[
+        { key: 'n', label: 'Name', render: (u) => <div className="col" style={{ gap: 0 }}><strong>{u.name}</strong><span className="tiny muted">{u.designation || u.role_label}{u.login_enabled ? '' : ' · no sign-in'}</span></div> },
+        { key: 'r', label: 'Role', render: (u) => <span className="small">{labelOf(ROLES, u.role)}</span> },
+        { key: 'where', label: 'Region / factory', render: (u) => <span className="small">{u.region_name || u.factory_name || '—'}</span> },
+        { key: 'mgr', label: 'Reports to', render: (u) => <span className="small">{u.manager_name || '—'}</span> },
+        { key: 'load', label: 'Workload', render: (u) => <span className="small">{u.open_enquiries ? `${u.open_enquiries} enquiries · ` : ''}{u.customers ? `${u.customers} customers · ` : ''}{u.active_orders ? `${u.active_orders} orders · ` : ''}{u.open_tasks} tasks{u.overdue_tasks ? <span className="danger-text strong"> ({u.overdue_tasks} overdue)</span> : ''}</span> },
+        { key: 'last', label: 'Last sign-in', render: (u) => (u.login_enabled ? <span className="small">{u.last_login_at ? timeAgo(u.last_login_at) : 'Never'}</span> : <span className="muted small">—</span>) },
+        { key: 's', label: 'Status', render: (u) => (u.active ? <Badge size="sm" tone="green">Active</Badge> : <Badge size="sm">Inactive</Badge>) },
+      ]} />
+    </Card>
   );
 }

@@ -1,217 +1,128 @@
-import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import {
-  CUSTOMER_TYPES, CUSTOMER_STATUSES, VALUE_CATEGORIES, INDUSTRIES, LEAD_SOURCES, CONTACT_ROLES, labelOf,
-} from '@shared/constants.js';
-import { api } from '../api.js';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { api, downloadAuthed } from '../api.js';
 import { useAuth } from '../auth.jsx';
-import { useApi, useUrlFilters } from '../lib/hooks.js';
-import { inrCompact, date, timeAgo, downloadCsv } from '../lib/format.js';
-import {
-  Badge, Button, Card, DataTable, Field, Input, Modal, OptionBadge, PageHeader, Pagination, SearchBox, Select, Textarea, Tags, useToast, Checkbox,
-} from '../components/ui.jsx';
-import { UserSelect, useMeta, SALES_ROLES } from '../components/domain.jsx';
+import { useApi, useUrlFilters, useSave } from '../lib/hooks.js';
+import { date, timeAgo } from '../lib/format.js';
+import { VALUE_CATEGORIES, INDUSTRIES, labelOf, toneOf } from '@shared/constants.js';
+import { Badge, Button, Card, Chips, DataTable, ErrorState, PageHeader, Pagination, SearchBox, Modal, Field, Input, Checkbox, SaveStatus, Select, Textarea, useToast } from '../components/ui.jsx';
+import { FilterBar, CountrySelect, UserSelect, useOptions, useMeta } from '../components/domain.jsx';
 
-function Segment({ title, dimension, rows, value, onPick, labeler }) {
-  const [more, setMore] = useState(false);
-  if (!rows?.length) return null;
-  const list = rows.filter((r) => r.key !== null && r.key !== undefined && r.key !== '');
-  const shown = more ? list : list.slice(0, 6);
-  return (
-    <div style={{ marginBottom: 14 }}>
-      <div className="tiny muted strong" style={{ textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 4 }}>{title}</div>
-      {shown.map((r) => {
-        const active = String(value) === String(r.key);
-        return (
-          <button key={r.key} type="button" onClick={() => onPick(dimension, active ? '' : r.key)} className={`btn ghost sm ${active ? 'on' : ''}`}
-            style={{ width: '100%', justifyContent: 'space-between', fontWeight: active ? 600 : 400, color: active ? 'var(--accent)' : undefined, background: active ? 'var(--accent-soft)' : undefined }}>
-            <span className="truncate">{labeler ? labeler(r.key) : r.key}</span>
-            <span className="muted tiny">{r.count}</span>
-          </button>
-        );
-      })}
-      {list.length > 6 && <button type="button" className="btn ghost xs" onClick={() => setMore(!more)}>{more ? 'Show less' : `+${list.length - 6} more`}</button>}
-    </div>
-  );
-}
+const REL = { prospect: { label: 'Prospect', tone: 'slate' }, active: { label: 'Active buyer', tone: 'green' }, dormant: { label: 'Dormant', tone: 'amber' } };
+const TAG_TONE = (c) => c || 'slate';
 
 export default function Customers() {
   const { can } = useAuth();
-  const meta = useMeta();
   const navigate = useNavigate();
-  const [f, setFilter, clear] = useUrlFilters();
-  const [creating, setCreating] = useState(false);
-  const query = { ...f, pageSize: 50 };
-  const { data, loading } = useApi('/customers', query);
-  const { data: seg } = useApi('/customers/segments');
-  const sort = f.sort ? { key: f.sort, dir: f.dir || 'desc' } : null;
-  const active = ['customer_type', 'industry', 'status', 'value_category', 'region_id', 'state', 'source', 'campaign_id', 'category_id', 'tag', 'assigned_to', 'outstanding'].filter((k) => f[k]);
-
-  const columns = [
-    { key: 'name', label: 'Customer', sort: 'name', render: (c) => (
-      <div className="col" style={{ gap: 1, maxWidth: 300 }}>
-        <Link to={`/customers/${c.id}`} className="strong truncate">{c.name}</Link>
-        <span className="tiny muted">{c.code}{c.primary_contact ? ` · ${c.primary_contact}` : ''}</span>
-        <Tags tags={c.tags} />
-      </div>
-    ) },
-    { key: 'type', label: 'Type', sort: 'type', render: (c) => <span className="small">{labelOf(CUSTOMER_TYPES, c.customer_type)}<div className="tiny muted">{c.industry}</div></span> },
-    { key: 'city', label: 'Location', sort: 'city', render: (c) => <span className="small">{[c.city, c.state].filter(Boolean).join(', ')}<div className="tiny muted">{c.region_name}</div></span> },
-    { key: 'status', label: 'Status', sort: 'status', render: (c) => <span className="row" style={{ gap: 4 }}><OptionBadge list={CUSTOMER_STATUSES} value={c.status} size="sm" />{c.dormant && <Badge size="sm" color="amber">Dormant</Badge>}</span> },
-    { key: 'value_category', label: 'Value', render: (c) => <OptionBadge list={VALUE_CATEGORIES} value={c.value_category} size="sm" /> },
-    { key: 'owner', label: 'Owner', sort: 'owner', render: (c) => <span className="small">{c.owner_name || '—'}</span> },
-    { key: 'open_leads', label: 'Open leads', align: 'num', render: (c) => c.open_leads || <span className="muted">0</span> },
-    { key: 'value', label: 'Lifetime value', align: 'num', sort: 'value', render: (c) => (c.lifetime_value !== undefined ? inrCompact(c.lifetime_value) : '—') },
-    can('payments.view') && { key: 'outstanding', label: 'Outstanding', align: 'num', sort: 'outstanding', render: (c) => (c.outstanding > 1 ? <span className="strong">{inrCompact(c.outstanding)}</span> : <span className="muted">—</span>) },
-    { key: 'last_order', label: 'Last order', sort: 'last_order', render: (c) => <span className="small">{c.last_order_date ? date(c.last_order_date) : '—'}</span> },
-    { key: 'last_activity', label: 'Last contact', sort: 'last_activity', render: (c) => <span className="small muted">{c.last_activity ? timeAgo(c.last_activity) : '—'}</span> },
-  ];
-
-  const exportCsv = async () => {
-    const all = await api.get('/customers', { ...query, pageSize: 500, page: 1 });
-    downloadCsv('customers.csv', [
-      { key: 'code', label: 'Code' }, { key: 'name', label: 'Name' }, { key: 'customer_type', label: 'Type', csv: (c) => labelOf(CUSTOMER_TYPES, c.customer_type) },
-      { key: 'industry', label: 'Industry' }, { key: 'gstin', label: 'GSTIN' }, { key: 'city', label: 'City' }, { key: 'state', label: 'State' }, { key: 'region_name', label: 'Region' },
-      { key: 'status', label: 'Status' }, { key: 'value_category', label: 'Value category' }, { key: 'owner_name', label: 'Owner' }, { key: 'primary_contact', label: 'Primary contact' },
-      { key: 'primary_phone', label: 'Phone' }, { key: 'lifetime_value', label: 'Lifetime value' }, { key: 'outstanding', label: 'Outstanding' }, { key: 'last_order_date', label: 'Last order' },
-      { key: 'tags', label: 'Tags', csv: (c) => c.tags.map((t) => t.name).join('; ') },
-    ], all.rows);
-  };
-
+  const toast = useToast();
+  const [f, setF] = useUrlFilters({ page: '1' });
+  const { data, error, loading, reload } = useApi('/customers', { ...f, pageSize: 50 });
+  const { data: facets } = useApi('/customers/facets');
+  const [adding, setAdding] = useState(false);
   return (
-    <div>
-      <PageHeader title="Customers" subtitle="Company master with multi-dimensional segmentation"
-        actions={<><Button icon="download" onClick={exportCsv}>Export</Button>{can('customers.edit') && <Button variant="primary" icon="plus" onClick={() => setCreating(true)}>New customer</Button>}</>} />
-      <div className="grid" style={{ gridTemplateColumns: '230px minmax(0, 1fr)', alignItems: 'start' }}>
-        <Card className="no-print" title="Segments" actions={active.length > 0 && <Button size="xs" variant="ghost" onClick={clear}>Clear</Button>}>
-          {seg ? (
-            <>
-              <Segment title="Business status" dimension="status" rows={seg.status} value={f.status} onPick={(k, v) => setFilter({ [k]: v })} labeler={(v) => (v === 'dormant' ? 'Dormant (no recent order)' : labelOf(CUSTOMER_STATUSES, v))} />
-              <Segment title="Customer type" dimension="customer_type" rows={seg.customer_type} value={f.customer_type} onPick={(k, v) => setFilter({ [k]: v })} labeler={(v) => labelOf(CUSTOMER_TYPES, v)} />
-              <Segment title="Value category" dimension="value_category" rows={seg.value_category} value={f.value_category} onPick={(k, v) => setFilter({ [k]: v })} labeler={(v) => labelOf(VALUE_CATEGORIES, v)} />
-              <Segment title="Region" dimension="region_id" rows={seg.region_id} value={f.region_id} onPick={(k, v) => setFilter({ [k]: v })} labeler={(v) => meta.regions.find((r) => r.id === v)?.name || '—'} />
-              <Segment title="State" dimension="state" rows={seg.state} value={f.state} onPick={(k, v) => setFilter({ [k]: v })} />
-              <Segment title="Industry" dimension="industry" rows={seg.industry} value={f.industry} onPick={(k, v) => setFilter({ [k]: v })} />
-              <Segment title="Product interest" dimension="category_id" rows={seg.category_id} value={f.category_id} onPick={(k, v) => setFilter({ [k]: v })} labeler={(v) => meta.categories.find((c) => c.id === v)?.name} />
-              <Segment title="Source" dimension="source" rows={seg.source} value={f.source} onPick={(k, v) => setFilter({ [k]: v })} labeler={(v) => labelOf(LEAD_SOURCES, v)} />
-              <Segment title="Exhibition / campaign" dimension="campaign_id" rows={seg.campaign_id} value={f.campaign_id} onPick={(k, v) => setFilter({ [k]: v })} labeler={(v) => meta.campaigns.find((c) => c.id === v)?.name} />
-              <Segment title="Tags" dimension="tag" rows={seg.tag} value={f.tag} onPick={(k, v) => setFilter({ [k]: v })} />
-            </>
-          ) : <span className="muted small">Loading…</span>}
-        </Card>
-        <div className="stack-sm" style={{ minWidth: 0 }}>
-          <div className="filter-bar" style={{ marginBottom: 0 }}>
-            <SearchBox value={f.q} onChange={(q) => setFilter({ q })} placeholder="Name, code, GSTIN, city, contact, phone" />
-            <UserSelect className="sm" roles={SALES_ROLES} value={f.assigned_to} onChange={(e) => setFilter({ assigned_to: e.target.value })} placeholder="Any owner" />
-            {can('payments.view') && <Checkbox label="With outstanding" checked={f.outstanding === '1'} onChange={(v) => setFilter({ outstanding: v ? '1' : '' })} />}
-          </div>
-          {active.length > 0 && (
-            <div className="chips">
-              {active.map((k) => <button key={k} type="button" className="chip on" onClick={() => setFilter({ [k]: '' })}>{k.replace('_id', '').replace('_', ' ')}: {k === 'region_id' ? meta.regions.find((r) => r.id === Number(f[k]))?.name : k === 'campaign_id' ? meta.campaigns.find((c) => c.id === Number(f[k]))?.name : k === 'category_id' ? meta.categories.find((c) => c.id === Number(f[k]))?.name : f[k]} ×</button>)}
-            </div>
-          )}
-          <Card flush>
-            <DataTable columns={columns} rows={data?.rows} loading={loading} sort={sort} onSort={(s) => setFilter({ sort: s.key, dir: s.dir })} onRowClick={(c) => navigate(`/customers/${c.id}`)} />
-            <Pagination page={Number(f.page) || 1} pageSize={50} count={data?.count || 0} onChange={(page) => setFilter({ page })} />
-          </Card>
-        </div>
+    <div className="stack">
+      <PageHeader title="Customers" subtitle="Search by company, alias, phone, email, enquiry, order number or customer PO. Each record opens the one unified profile."
+        actions={<>
+          {can('export.lists') && <Button icon="download" onClick={() => downloadAuthed('/export/customers.csv', f).catch((e) => toast.error(e.message))}>Export</Button>}
+          {can('customers.edit') && <Button variant="cta" icon="plus" onClick={() => setAdding(true)}>New customer</Button>}
+        </>} />
+      <div className="row wrap">
+        <SearchBox value={f.q} onChange={(v) => setF({ q: v })} placeholder="Company, phone, email, order, PO…" autoFocus />
+        <FilterBar value={f} onChange={setF} fields={['owner', 'segment', 'country']} />
+        <Select aria-label="Flags" value={f.flag || ''} onChange={(e) => setF({ flag: e.target.value, provisional: e.target.value === 'provisional' ? '1' : '', dnc: e.target.value === 'dnc' ? '1' : '', credit_hold: e.target.value === 'credit_hold' ? '1' : '', include_archived: e.target.value === 'archived' ? '1' : '' })}
+          options={[{ value: 'provisional', label: 'Provisional records' }, { value: 'dnc', label: 'Do not contact' }, { value: 'credit_hold', label: 'On credit hold' }, { value: 'archived', label: 'Include archived & merged' }]} placeholder="All customers" />
       </div>
-      <CustomerFormModal open={creating} onClose={() => setCreating(false)} onSaved={(id) => navigate(`/customers/${id}`)} />
+      <Chips value={f.status || ''} onChange={(v) => setF({ status: v })} options={[
+        { value: '', label: 'Everyone' }, { value: 'active', label: 'Active buyers' }, { value: 'dormant', label: 'Dormant buyers' }, { value: 'prospect', label: 'Prospects (no order yet)' }, { value: 'open_work', label: 'With open work' },
+      ]} />
+      {facets && (
+        <div className="filter-bar">
+          {facets.regions.length > 0 && <Select aria-label="Region" value={f.region_id || ''} onChange={(e) => setF({ region_id: e.target.value })} placeholder="All regions" options={facets.regions.map((x) => ({ value: String(x.value), label: `${x.label} (${x.n})` }))} />}
+          {facets.states.length > 0 && <Select aria-label="State" value={f.state || ''} onChange={(e) => setF({ state: e.target.value })} placeholder="All states" options={facets.states.map((x) => ({ value: x.value, label: `${x.value} (${x.n})` }))} />}
+          {facets.industries.length > 0 && <Select aria-label="Industry" value={f.industry || ''} onChange={(e) => setF({ industry: e.target.value })} placeholder="All industries" options={facets.industries.map((x) => ({ value: x.value, label: `${x.value} (${x.n})` }))} />}
+          {facets.value_categories.length > 0 && <Select aria-label="Value category" value={f.value_category || ''} onChange={(e) => setF({ value_category: e.target.value })} placeholder="Any value category" options={facets.value_categories.map((x) => ({ value: x.value, label: `${labelOf(VALUE_CATEGORIES, x.value)} (${x.n})` }))} />}
+          {facets.sources.length > 0 && <Select aria-label="First source" value={f.source || ''} onChange={(e) => setF({ source: e.target.value })} placeholder="Any first source" options={facets.sources.map((x) => ({ value: x.value, label: `${x.label || x.value} (${x.n})` }))} />}
+          {facets.interests.length > 0 && <Select aria-label="Interested in" value={f.interest || ''} onChange={(e) => setF({ interest: e.target.value })} placeholder="Any product interest" options={facets.interests.map((x) => ({ value: String(x.value), label: `${x.label} (${x.n})` }))} />}
+          {facets.tags.length > 0 && <Select aria-label="Tag" value={f.tag || ''} onChange={(e) => setF({ tag: e.target.value })} placeholder="Any tag" options={facets.tags.map((x) => ({ value: String(x.value), label: `${x.label} (${x.n})` }))} />}
+          {facets.campaigns.length > 0 && <Select aria-label="Campaign" value={f.campaign_id || ''} onChange={(e) => setF({ campaign_id: e.target.value })} placeholder="Any campaign" options={facets.campaigns.map((x) => ({ value: String(x.value), label: `${x.label} (${x.n})` }))} />}
+        </div>
+      )}
+      {error && <ErrorState error={error} onRetry={reload} />}
+      <Card flush>
+        <DataTable loading={loading} rows={data?.rows} onRowClick={(r) => navigate(`/customers/${r.id}`)}
+          columns={[
+            { key: 'name', label: 'Customer', render: (r) => <><strong>{r.company_name}</strong> {r.provisional ? <Badge size="sm">Provisional</Badge> : null}{r.do_not_contact ? <Badge size="sm" tone="slate" icon="ban">Do not contact</Badge> : null}{r.credit_hold ? <Badge size="sm" tone="red">Credit hold</Badge> : null}{r.archived_at ? <Badge size="sm">Archived</Badge> : null}<div className="sub">{r.code} · {r.primary_contact || 'no contact channel'}</div>{r.tags?.length > 0 && <div className="row wrap mt-8" style={{ gap: 4 }}>{r.tags.map((t) => <span key={t} className="tag">{t}</span>)}</div>}</> },
+            { key: 'rel', label: 'Relationship', render: (r) => <span className="stack-xs">{r.relationship && <Badge size="sm" tone={REL[r.relationship]?.tone}>{REL[r.relationship]?.label}</Badge>}{r.value_category && <Badge size="sm" tone={toneOf(VALUE_CATEGORIES, r.value_category)}>{labelOf(VALUE_CATEGORIES, r.value_category)}</Badge>}</span> },
+            { key: 'where', label: 'Location', render: (r) => <>{[r.city, r.state, r.country_code].filter(Boolean).join(', ') || <span className="muted">Unknown</span>}{r.industry && <div className="sub">{r.industry}</div>}</> },
+            { key: 'owner', label: 'Owner', render: (r) => r.owner_name },
+            { key: 'last_order', label: 'Last order', render: (r) => (r.last_order_date ? date(r.last_order_date, { year: true }) : <span className="muted">None / unknown</span>) },
+            { key: 'last_contact', label: 'Last contact', render: (r) => (r.last_contact_at ? timeAgo(r.last_contact_at) : <span className="muted">—</span>) },
+            { key: 'open', label: 'Open work', render: (r) => <span className="small">{r.open_enquiries ? `${r.open_enquiries} enquiry · ` : ''}{r.active_orders ? `${r.active_orders} active order(s)` : ''}{!r.open_enquiries && !r.active_orders ? <span className="muted">—</span> : ''}</span> },
+          ]}
+          card={(r) => <><strong>{r.company_name}</strong><div className="small">{[r.city, r.country_code].filter(Boolean).join(', ')} · {r.owner_name}</div><div className="tiny muted">Last order {r.last_order_date ? date(r.last_order_date) : 'none'}</div></>}
+        />
+        <Pagination page={Number(f.page) || 1} pageSize={50} count={data?.count || 0} onChange={(p) => setF({ page: String(p) })} />
+      </Card>
+      <Modal open={adding} onClose={() => setAdding(false)} title="New customer" subtitle="Possible existing matches are shown before anything is created.">
+        {adding && <NewCustomerForm onSaved={(id) => navigate(`/customers/${id}`)} />}
+      </Modal>
     </div>
   );
 }
 
-export function CustomerFormModal({ open, onClose, onSaved, customer }) {
+function NewCustomerForm({ onSaved }) {
+  const save = useSave();
+  const types = useOptions('customer_type');
   const meta = useMeta();
-  const toast = useToast();
-  const { can, user } = useAuth();
-  const [form, setForm] = useState({});
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    if (!open) return;
-    setForm(customer
-      ? { ...customer, interests: customer.interests.map((i) => i.id), tags: customer.tags.map((t) => t.name).join(', ') }
-      : { customer_type: 'direct', status: 'prospect', value_category: 'regular', country: 'India', payment_terms_days: 30, interests: [], contact: { contact_role: 'purchase' } });
-  }, [open, customer]);
-  const set = (k) => (e) => setForm((s) => ({ ...s, [k]: e?.target ? e.target.value : e }));
-  const setContact = (k) => (e) => setForm((s) => ({ ...s, contact: { ...s.contact, [k]: e.target.value } }));
-
-  const save = async (allowDuplicate = false) => {
-    setBusy(true);
-    try {
-      const body = { ...form, tags: String(form.tags || '').split(',').map((t) => t.trim()).filter(Boolean), allow_duplicate: allowDuplicate };
-      if (!customer && form.contact?.name) body.contacts = [{ ...form.contact, is_primary: true }];
-      if (customer) {
-        await api.put(`/customers/${customer.id}`, body);
-        toast.success('Customer updated');
-        onSaved?.(customer.id);
-      } else {
-        const res = await api.post('/customers', body);
-        toast.success('Customer created');
-        onSaved?.(res.id);
-      }
-      onClose();
-    } catch (err) {
-      if (err.details?.duplicate_id) {
-        toast.error(`${err.message}. Opening the existing record.`);
-        onClose();
-        onSaved?.(err.details.duplicate_id);
-      } else toast.error(err.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const finance = can('finance.full');
+  const sources = useOptions('enquiry_source');
+  const [f, setF] = useState({ company_name: '', country_code: 'IN', city: '', state: '', segment: '', types: [], owner_id: null, contact_name: '', role: '', phone: '', email: '', provisional: false, external_account_id: '', industry: '', gstin: '', value_category: '', acquisition_source: '', campaign_id: '', region_id: '', tags: '', interests: [], billing_address: '', payment_terms: '' });
+  const set = (p) => setF((x) => ({ ...x, ...p }));
+  const dup = save.error?.code === 'possible_duplicate' ? save.error.details.matches : null;
+  const submit = (confirm) => save.run(async () => {
+    const r = await api.post('/customers', {
+      company_name: f.company_name, country_code: f.country_code, city: f.city, state: f.state || undefined, segment: f.segment || undefined, types: f.types, owner_id: f.owner_id, provisional: f.provisional,
+      industry: f.industry || undefined, gstin: f.gstin || undefined, value_category: f.value_category || undefined, acquisition_source: f.acquisition_source || undefined, campaign_id: f.campaign_id || undefined,
+      region_id: f.region_id || undefined, tags: f.tags ? f.tags.split(',').map((t) => t.trim()).filter(Boolean) : undefined, interests: f.interests.length ? f.interests : undefined, billing_address: f.billing_address || undefined, payment_terms: f.payment_terms || undefined,
+      external_account_id: f.external_account_id || undefined, contacts: [{ name: f.contact_name, role: f.role, phone: f.phone, email: f.email }], confirm_not_duplicate: confirm || undefined,
+    });
+    onSaved(r.id);
+  });
   return (
-    <Modal open={open} onClose={onClose} size="lg" title={customer ? `Edit ${customer.name}` : 'New customer'}
-      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} onClick={() => save()}>Save</Button></>}>
+    <form className="stack-sm" onSubmit={(e) => { e.preventDefault(); submit(false); }}>
       <div className="form-grid">
-        <div className="form-section">Company</div>
-        <Field label="Company name" required className="full"><Input value={form.name} onChange={set('name')} autoFocus /></Field>
-        <Field label="Customer type"><Select value={form.customer_type} onChange={set('customer_type')} options={CUSTOMER_TYPES} /></Field>
-        <Field label="Industry"><Input list="industries" value={form.industry} onChange={set('industry')} /><datalist id="industries">{INDUSTRIES.map((i) => <option key={i} value={i} />)}</datalist></Field>
-        <Field label="GST number" hint="15 characters"><Input value={form.gstin} onChange={set('gstin')} style={{ textTransform: 'uppercase' }} /></Field>
-        <Field label="Website"><Input value={form.website} onChange={set('website')} /></Field>
-        <Field label="Status"><Select value={form.status} onChange={set('status')} options={CUSTOMER_STATUSES.filter((s) => finance || s.value !== 'blocked' || form.status === 'blocked')} /></Field>
-        <Field label="Value category"><Select value={form.value_category} onChange={set('value_category')} options={VALUE_CATEGORIES} /></Field>
-        <Field label="Assigned salesperson"><UserSelect roles={SALES_ROLES} value={form.assigned_to} onChange={set('assigned_to')} disabled={user.role === 'sales_executive'} placeholder={user.role === 'sales_executive' ? 'You' : 'Unassigned'} /></Field>
-        <Field label="Source"><Select value={form.source} onChange={set('source')} placeholder="—" options={LEAD_SOURCES} /></Field>
-        <Field label="Exhibition / campaign" className="full"><Select value={form.campaign_id} onChange={set('campaign_id')} placeholder="—" options={meta.campaigns.map((c) => ({ value: c.id, label: c.name }))} /></Field>
-
-        <div className="form-section">Location</div>
-        <Field label="Billing address" className="full"><Textarea rows={2} value={form.billing_address} onChange={set('billing_address')} /></Field>
-        <Field label="Shipping address" className="full"><Textarea rows={2} value={form.shipping_address} onChange={set('shipping_address')} placeholder="Same as billing if blank" /></Field>
-        <Field label="Region"><Select value={form.region_id} onChange={set('region_id')} placeholder="—" options={meta.regions.map((r) => ({ value: r.id, label: r.name }))} /></Field>
-        <Field label="State"><Input list="states" value={form.state} onChange={set('state')} /><datalist id="states">{meta.states.map((s) => <option key={s} value={s} />)}</datalist></Field>
-        <Field label="City"><Input value={form.city} onChange={set('city')} /></Field>
-        <Field label="Country / PIN"><div className="row"><Input value={form.country} onChange={set('country')} /><Input value={form.pincode} onChange={set('pincode')} placeholder="PIN" /></div></Field>
-
-        <div className="form-section">Commercial</div>
-        <Field label="Payment terms"><Input value={form.payment_terms} onChange={set('payment_terms')} placeholder="e.g. 30 days from invoice" /></Field>
-        <Field label="Credit days"><Input type="number" min="0" value={form.payment_terms_days} onChange={set('payment_terms_days')} disabled={Boolean(customer) && !finance} /></Field>
-        {finance && <Field label="Credit limit (₹)"><Input type="number" min="0" value={form.credit_limit} onChange={set('credit_limit')} /></Field>}
-        <Field label="Tags" hint="Comma separated"><Input list="ctags" value={form.tags} onChange={set('tags')} /><datalist id="ctags">{meta.tags.map((t) => <option key={t.id} value={t.name} />)}</datalist></Field>
-        <Field label="Product interest" className="full">
-          <div className="chips">
-            {meta.categories.map((c) => {
-              const on = (form.interests || []).includes(c.id);
-              return <button key={c.id} type="button" className={`chip ${on ? 'on' : ''}`} onClick={() => setForm((s) => ({ ...s, interests: on ? s.interests.filter((x) => x !== c.id) : [...(s.interests || []), c.id] }))}>{c.name}</button>;
-            })}
-          </div>
-        </Field>
-        <Field label="Notes" className="full"><Textarea rows={2} value={form.notes} onChange={set('notes')} /></Field>
-
-        {!customer && (
-          <>
-            <div className="form-section">Primary contact</div>
-            <Field label="Name"><Input value={form.contact?.name} onChange={setContact('name')} /></Field>
-            <Field label="Role"><Select value={form.contact?.contact_role} onChange={setContact('contact_role')} options={CONTACT_ROLES} /></Field>
-            <Field label="Phone"><Input value={form.contact?.phone} onChange={setContact('phone')} /></Field>
-            <Field label="Email"><Input value={form.contact?.email} onChange={setContact('email')} /></Field>
-          </>
-        )}
+        <Field label="Company name" required className="full" error={save.fields.company_name}><Input value={f.company_name} onChange={(e) => set({ company_name: e.target.value })} /></Field>
+        <Field label="Country" hint="Unknown is allowed for a first capture"><CountrySelect value={f.country_code} onChange={(v) => set({ country_code: v })} /></Field>
+        <Field label="City" optional><Input value={f.city} onChange={(e) => set({ city: e.target.value })} /></Field>
+        <Field label="Domestic / export" optional hint="Not inferred from the phone number"><Select value={f.segment} onChange={(e) => set({ segment: e.target.value })} options={[{ value: 'domestic', label: 'Domestic' }, { value: 'export', label: 'Export' }]} placeholder="From country" /></Field>
+        <Field label="Owner" hint="Defaults to you"><UserSelect value={f.owner_id} onChange={(v) => set({ owner_id: v })} filter={(p) => ['admin', 'coordinator', 'sales'].includes(p.group)} /></Field>
+        <Field label="State" optional hint="Sets the sales region when it is left blank"><Input value={f.state} onChange={(e) => set({ state: e.target.value })} list="indian-states" /></Field>
+        <Field label="Region" optional error={save.fields.region_id}><Select value={f.region_id} onChange={(e) => set({ region_id: e.target.value })} placeholder="From the state" options={meta.regions.filter((r) => r.active).map((r) => ({ value: String(r.id), label: r.name }))} /></Field>
+        <Field label="Industry" optional><Input value={f.industry} onChange={(e) => set({ industry: e.target.value })} list="industries" /><datalist id="industries">{INDUSTRIES.map((x) => <option key={x} value={x} />)}</datalist></Field>
+        <Field label="GSTIN" optional error={save.fields.gstin}><Input value={f.gstin} onChange={(e) => set({ gstin: e.target.value.toUpperCase() })} maxLength={15} /></Field>
+        <Field label="Value category" optional><Select value={f.value_category} onChange={(e) => set({ value_category: e.target.value })} placeholder="Not classified" options={VALUE_CATEGORIES} /></Field>
+        <Field label="How they found us" optional><Select value={f.acquisition_source} onChange={(e) => set({ acquisition_source: e.target.value })} placeholder="Not known" options={sources} /></Field>
+        {meta.campaigns.length > 0 && <Field label="Campaign" optional><Select value={f.campaign_id} onChange={(e) => set({ campaign_id: e.target.value })} placeholder="None" options={meta.campaigns.map((c) => ({ value: String(c.id), label: c.name }))} /></Field>}
+        <Field label="Tags" optional hint="Comma separated, e.g. OEM, Key panel builder"><Input value={f.tags} onChange={(e) => set({ tags: e.target.value })} /></Field>
+        <Field label="Interested in" optional className="full"><div className="row wrap">{meta.categories.filter((c) => c.active).map((c) => <Checkbox key={c.id} label={c.name} checked={f.interests.includes(c.id)} onChange={(v) => set({ interests: v ? [...f.interests, c.id] : f.interests.filter((x) => x !== c.id) })} />)}</div></Field>
+        <Field label="Billing address" optional className="full"><Textarea rows={2} value={f.billing_address} onChange={(e) => set({ billing_address: e.target.value })} /></Field>
+        <Field label="Payment terms" optional className="full"><Input value={f.payment_terms} onChange={(e) => set({ payment_terms: e.target.value })} placeholder="e.g. 30% advance, balance 30 days from invoice" /></Field>
+        <Field label="Customer types" optional className="full"><div className="row wrap">{types.map((t) => <Checkbox key={t.value} label={t.label} checked={f.types.includes(t.value)} onChange={(v) => set({ types: v ? [...f.types, t.value] : f.types.filter((x) => x !== t.value) })} />)}</div></Field>
+        <div className="form-section">Contact (phone or email needed)</div>
+        <Field label="Name" optional><Input value={f.contact_name} onChange={(e) => set({ contact_name: e.target.value })} /></Field>
+        <Field label="Designation" optional><Input value={f.role} onChange={(e) => set({ role: e.target.value })} /></Field>
+        <Field label="Phone" error={save.fields['contacts.0.phone'] || save.fields.contacts}><Input value={f.phone} onChange={(e) => set({ phone: e.target.value })} inputMode="tel" /></Field>
+        <Field label="Email" error={save.fields['contacts.0.email']}><Input type="email" value={f.email} onChange={(e) => set({ email: e.target.value })} /></Field>
+        <Field label="Accounting ID" optional><Input value={f.external_account_id} onChange={(e) => set({ external_account_id: e.target.value })} /></Field>
+        <div style={{ alignSelf: 'end' }}><Checkbox label="Provisional (details to be confirmed)" checked={f.provisional} onChange={(v) => set({ provisional: v })} /></div>
       </div>
-    </Modal>
+      {dup && (
+        <div className="match-card" role="alert">
+          <div className="strong small">Possible existing customer — nothing has been created:</div>
+          {dup.map((m) => <div key={m.id} className="row between mt-8"><span className="small"><strong>{m.company_name}</strong> {m.city ? `· ${m.city}` : ''} — {m.reasons.join('; ')}</span><Button size="xs" to={`/customers/${m.id}`}>Open</Button></div>)}
+          <Button size="sm" className="mt-8" onClick={() => submit(true)}>It is a separate company — create it</Button>
+        </div>
+      )}
+      <div className="row between"><SaveStatus save={save} /><Button type="submit" variant="primary" loading={save.saving}>Create customer</Button></div>
+    </form>
   );
 }

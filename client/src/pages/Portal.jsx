@@ -1,143 +1,157 @@
-// Customer-facing pages: no login, reached through a shared link.
+// Customer-facing pages reached through a shared link (no sign-in): the quotation (view, accept or ask for
+// a revision) and order tracking. Only customer-safe fields are ever returned by the server.
 import { useEffect, useState } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { api } from '../api.js';
-import { inr, number, date, dateTime } from '../lib/format.js';
-import { Badge, Button, Card, Field, Input, KV, Spinner, useToast } from '../components/ui.jsx';
+import { date, dateTime, money, number, qty as fmtQty } from '../lib/format.js';
+import { Badge, Button, Card, Facts, Field, Input, Notice, Spinner, Textarea, useToast } from '../components/ui.jsx';
+import { JourneyStepper } from '../components/domain.jsx';
 import Icon from '../components/Icon.jsx';
 
 function PortalShell({ company, title, subtitle, children }) {
   return (
     <div className="portal">
-      <div className="row between" style={{ marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+      <div className="row between wrap" style={{ marginBottom: 20, gap: 12 }}>
         <div>
-          <div className="row" style={{ gap: 10 }}>
-            <span className="brand-mark"><svg width="18" height="18" viewBox="0 0 32 32" aria-hidden><path d="M8 9l8 15 8-15" stroke="white" strokeWidth="3.5" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
-            <strong>{company?.name}</strong>
+          <div className="brand-name" style={{ color: 'var(--heading)', fontSize: 20 }}>
+            <span aria-hidden style={{ width: 8, height: 20, background: 'var(--cta)', display: 'inline-block', transform: 'skewX(-18deg)', borderRadius: 2 }} />
+            {company?.name}
           </div>
-          <div className="small muted" style={{ marginTop: 4 }}>{company?.address}</div>
+          {company?.address && <div className="small muted" style={{ marginTop: 4, maxWidth: 420 }}>{company.address}</div>}
         </div>
-        <div className="right small muted">
-          <div>{company?.phone}</div>
-          <div>{company?.email}</div>
+        <div className="small muted" style={{ textAlign: 'right' }}>
+          {company?.phone && <div>{company.phone}</div>}
+          {company?.email && <div>{company.email}</div>}
+          {company?.website && <div>{company.website}</div>}
         </div>
       </div>
       <h1 style={{ marginBottom: 4 }}>{title}</h1>
-      <div className="muted" style={{ marginBottom: 16 }}>{subtitle}</div>
+      {subtitle && <div className="muted" style={{ marginBottom: 16 }}>{subtitle}</div>}
       {children}
-      <div className="small muted" style={{ marginTop: 28, textAlign: 'center' }}>This page is shared with you by {company?.name}. Questions? Reply to the email or call the number above.</div>
+      <div className="small muted" style={{ marginTop: 28, textAlign: 'center' }}>Shared with you by {company?.name}. Questions? Reply to the email or call the number above.</div>
     </div>
   );
 }
 
+function Failure({ message }) {
+  return <div className="portal"><Notice tone="danger" title="This link cannot be opened">{message}</Notice></div>;
+}
+
 export function QuotePortal() {
   const { token } = useParams();
-  const [params] = useSearchParams();
   const toast = useToast();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
-  const [form, setForm] = useState({ action: '', name: '', message: '' });
-  const [sent, setSent] = useState(false);
-
-  const load = () => api.get(`/public/quotations/${token}${params.get('preview') ? '?preview=1' : ''}`).then(setData, (err) => setError(err.message));
+  const [form, setForm] = useState({ name: '', note: '' });
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(null);
+  const load = () => api.get(`/public/quotations/${token}`).then(setData, (err) => setError(err.message));
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
-
-  if (error) return <div className="portal"><div className="error-box">{error}</div></div>;
+  if (error) return <Failure message={error} />;
   if (!data) return <Spinner />;
   const t = data.totals;
+  const m = (v) => (v === null || v === undefined ? '—' : money(v, data.currency));
 
   const respond = async (action) => {
     if (!form.name.trim()) {
       toast.error('Please enter your name');
       return;
     }
+    if (action === 'revise' && !form.note.trim()) {
+      toast.error('Tell us what should change');
+      return;
+    }
+    setBusy(true);
     try {
-      await api.post(`/public/quotations/${token}/respond`, { ...form, action });
-      setSent(true);
-      toast.success(action === 'accept' ? 'Thank you — we will follow up right away' : 'Sent to the sales team');
+      await api.post(`/public/quotations/${token}/respond`, { action, name: form.name, note: form.note });
+      setSent(action);
       load();
     } catch (err) {
       toast.error(err.message);
+    } finally {
+      setBusy(false);
     }
   };
 
   return (
-    <PortalShell company={data.company} title={`Quotation ${data.number}`} subtitle={`${data.subject || ''} · version ${data.version}${data.valid_until ? ` · valid until ${date(data.valid_until)}` : ''}`}>
+    <PortalShell company={data.company} title={`Quotation ${data.number}`}
+      subtitle={[data.subject, `revision ${data.revision_no}`, data.sent_at && `sent ${date(data.sent_at, { year: true })}`, data.validity_date && `valid until ${date(data.validity_date, { year: true })}`].filter(Boolean).join(' · ')}>
       <div className="stack">
-        {data.status === 'accepted' && <div className="info-box">You accepted this quotation. Our team is preparing the order confirmation.</div>}
-        {data.status === 'expired' && <div className="warn-box">This quotation has expired. Contact us for a fresh price.</div>}
+        {data.status === 'accepted' && <Notice tone="success" title="You accepted this quotation">Our team is preparing the order confirmation{data.decided_at ? ` (accepted ${dateTime(data.decided_at)})` : ''}.</Notice>}
+        {data.status === 'rejected' && <Notice tone="info">This quotation is closed. Contact us if your requirement has changed.</Notice>}
+        {data.expired && <Notice tone="warn" title="This quotation has expired">Contact us for an updated offer.</Notice>}
+        {data.customer_response && data.status === 'issued' && <Notice tone="info">Your message: {data.customer_response}</Notice>}
         <div className="doc">
-          <div className="row between top" style={{ gap: 20, marginBottom: 14 }}>
+          <div className="row between top wrap" style={{ gap: 20, marginBottom: 14 }}>
             <div>
               <div className="tiny muted">PREPARED FOR</div>
-              <div className="strong">{data.customer.name}</div>
-              <div className="small" style={{ whiteSpace: 'pre-wrap', maxWidth: 320 }}>{data.customer.billing_address}</div>
-              {data.customer.gstin && <div className="small muted">GSTIN {data.customer.gstin}</div>}
-              {data.contact.name && <div className="small">Kind attention: {data.contact.name}</div>}
+              <div className="strong">{data.customer?.company_name}</div>
+              <div className="small">{data.customer?.city}</div>
             </div>
-            <div className="right small">
-              <div className="tiny muted">YOUR CONTACT</div>
-              <div className="strong">{data.owner.name}</div>
-              <div>{data.owner.phone}</div>
-              <div>{data.owner.email}</div>
-            </div>
+            {data.owner && (
+              <div className="small" style={{ textAlign: 'right' }}>
+                <div className="tiny muted">YOUR CONTACT</div>
+                <div className="strong">{data.owner.name}</div>
+                {data.owner.phone && <div>{data.owner.phone}</div>}
+                {data.owner.email && <div>{data.owner.email}</div>}
+              </div>
+            )}
           </div>
-          <table>
-            <thead>
-              <tr><th style={{ width: 26 }}>#</th><th>Description</th><th className="right" style={{ width: 70 }}>Qty</th><th className="right" style={{ width: 90 }}>Rate</th><th className="right" style={{ width: 60 }}>Disc</th><th className="right" style={{ width: 95 }}>Taxable</th><th className="right" style={{ width: 50 }}>GST</th><th className="right" style={{ width: 100 }}>Amount</th></tr>
-            </thead>
-            <tbody>
-              {data.items.map((it, i) => (
-                <tr key={i}>
-                  <td>{i + 1}</td>
-                  <td><div className="strong">{it.description}</div>{it.specs && <div className="small muted">{it.specs}</div>}{it.hsn && <div className="tiny muted">HSN {it.hsn}</div>}</td>
-                  <td className="right num">{number(it.qty)} {it.unit}</td>
-                  <td className="right num">{inr(it.unit_price)}</td>
-                  <td className="right num">{it.discount_pct ? `${number(it.discount_pct, 1)}%` : '—'}</td>
-                  <td className="right num">{inr(it.taxable)}</td>
-                  <td className="right num">{it.gst_rate}%</td>
-                  <td className="right num">{inr(it.total)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div className="row between top" style={{ marginTop: 16, gap: 28 }}>
-            <div className="small" style={{ maxWidth: 380 }}>
-              <KV items={[['Payment terms', data.terms.payment], ['Delivery', data.terms.delivery], ['Warranty', data.terms.warranty], data.terms.notes && ['Notes', data.terms.notes]]} />
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>#</th><th>Description</th><th>HSN</th><th className="num">Qty</th><th className="num">Rate</th><th className="num">Disc.</th><th className="num">GST</th><th className="num">Amount</th></tr></thead>
+              <tbody>
+                {data.lines.map((l, i) => (
+                  <tr key={i}>
+                    <td>{i + 1}</td>
+                    <td><span className="strong">{l.product_code ? `${l.product_code} — ` : ''}{l.description}</span>{l.spec && <div className="small muted">{l.spec}</div>}</td>
+                    <td className="small">{l.hsn || '—'}</td>
+                    <td className="num">{fmtQty(l.qty, l.unit)}</td>
+                    <td className="num">{m(l.unit_price_minor)}</td>
+                    <td className="num">{l.discount_pct ? `${number(l.discount_pct, 2)}%` : '—'}</td>
+                    <td className="num">{number(l.gst_rate, 2)}%</td>
+                    <td className="num">{m(l.line_total_minor)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="row between top wrap" style={{ marginTop: 16, gap: 28 }}>
+            <div className="small" style={{ maxWidth: 420 }}>
+              <Facts items={[['Payment terms', data.payment_terms], ['Delivery', data.delivery_terms ? `${data.delivery_terms} (estimate)` : null], ['Warranty', data.warranty_terms], ['Notes', data.notes]]} />
             </div>
-            <div className="totals" style={{ minWidth: 250 }}>
-              <span className="muted">Gross value</span><span className="num">{inr(t.subtotal)}</span>
-              {t.discount_total > 0 && <><span className="muted">Discount</span><span className="num">− {inr(t.discount_total)}</span></>}
-              {t.freight > 0 && <><span className="muted">Freight</span><span className="num">{inr(t.freight)}</span></>}
-              {t.installation > 0 && <><span className="muted">Installation</span><span className="num">{inr(t.installation)}</span></>}
-              <span className="muted">Taxable value</span><span className="num">{inr(t.taxable_total)}</span>
-              <span className="muted">GST</span><span className="num">{inr(t.tax_total)}</span>
-              <span className="grand">Grand total</span><span className="grand num">{inr(t.grand_total)}</span>
+            <div className="totals" style={{ minWidth: 260 }}>
+              <span className="muted">Gross value</span><span className="num">{m(t.subtotal_minor)}</span>
+              {t.discount_total_minor > 0 && <><span className="muted">Discount</span><span className="num">− {m(t.discount_total_minor)}</span></>}
+              {t.freight_minor > 0 && <><span className="muted">Freight</span><span className="num">{m(t.freight_minor)}</span></>}
+              {t.installation_minor > 0 && <><span className="muted">Installation</span><span className="num">{m(t.installation_minor)}</span></>}
+              <span className="muted">Taxable value</span><span className="num">{m(t.total_minor)}</span>
+              <span className="muted">GST</span><span className="num">{m(t.tax_total_minor)}</span>
+              <span className="grand">Grand total ({data.currency})</span><span className="grand num">{m(t.grand_total_minor)}</span>
             </div>
           </div>
         </div>
 
-        {data.can_respond && !sent && (
-          <Card title="Your response">
+        {data.status === 'issued' && !data.expired && !sent && (
+          <Card title="Your response" className="no-print">
             <div className="stack">
               <div className="form-grid">
-                <Field label="Your name" required><Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} /></Field>
-                <Field label="Message / what you need changed"><Input value={form.message} onChange={(e) => setForm((f) => ({ ...f, message: e.target.value }))} /></Field>
+                <Field label="Your name" required><Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} autoComplete="name" /></Field>
+                <Field label="Message" optional hint="Needed if you want something changed"><Textarea rows={2} value={form.note} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} maxLength={1000} /></Field>
               </div>
               <div className="row wrap">
-                <Button variant="primary" icon="check" onClick={() => respond('accept')}>Accept quotation</Button>
-                <Button icon="edit" onClick={() => respond('revision')}>Request a revision</Button>
-                <Button variant="ghost" icon="mail" onClick={() => respond('comment')}>Send a comment</Button>
+                <Button variant="primary" icon="check" loading={busy} onClick={() => respond('accept')}>Accept quotation</Button>
+                <Button icon="edit" loading={busy} onClick={() => respond('revise')}>Request a revision</Button>
               </div>
               <div className="tiny muted">Accepting here tells our sales team to raise the order confirmation; your purchase order is still required.</div>
             </div>
           </Card>
         )}
-        {sent && <div className="info-box">Thank you — your response has reached {data.owner.name}.</div>}
-        <Button icon="printer" onClick={() => window.print()} className="no-print">Print / save as PDF</Button>
+        {sent && <Notice tone="success">{sent === 'accept' ? 'Thank you — we will confirm the order with you shortly.' : 'Thank you — your request has reached our sales team.'}</Notice>}
+        <div className="no-print"><Button icon="printer" onClick={() => window.print()}>Print / save as PDF</Button></div>
       </div>
     </PortalShell>
   );
@@ -150,73 +164,58 @@ export function OrderPortal() {
   useEffect(() => {
     api.get(`/public/orders/${token}`).then(setData, (err) => setError(err.message));
   }, [token]);
-  if (error) return <div className="portal"><div className="error-box">{error}</div></div>;
+  if (error) return <Failure message={error} />;
   if (!data) return <Spinner />;
-
+  const dispatchedAll = data.outcome === 'fully_dispatched';
   return (
-    <PortalShell company={data.company} title={`Order ${data.number}`} subtitle={`Against your PO ${data.customer_po_number || '—'} placed on ${date(data.order_date)}`}>
+    <PortalShell company={data.company} title={`Order ${data.code}`} subtitle={[data.po_reference && `Your PO ${data.po_reference}`, `received ${date(data.received_date, { year: true })}`, data.customer?.company_name].filter(Boolean).join(' · ')}>
       <div className="stack">
         <Card title="Where your order is">
-          <div className="stack">
-            <div className="row wrap" style={{ gap: 16 }}>
-              {data.milestones.map((m) => (
-                <div key={m.key} className="row" style={{ gap: 8 }}>
-                  <Badge color={m.done ? 'green' : 'slate'} size="sm">{m.done ? <Icon name="check" size={12} /> : '·'}</Badge>
-                  <span className={m.done ? 'strong' : 'muted'}>{m.label}{m.partial ? ' (partial)' : ''}</span>
-                </div>
-              ))}
-            </div>
-            <div className="divider" style={{ margin: 0 }} />
-            <KV items={[
-              ['Current status', <strong>{data.stage_label}</strong>],
-              ['Expected delivery', <span>{date(data.expected_delivery_date)} {data.revised ? <Badge color="amber" size="sm">revised</Badge> : null}</span>],
-              ['Production completion', data.planned_completion ? date(data.planned_completion) : '—'],
-            ]} />
+          {data.phase === 'mixed' ? <div className="small">Items are at different stages — see each line below.</div> : <JourneyStepper phase={data.phase} dispatched={dispatchedAll} />}
+          {data.closed && <Notice tone="success">This order is complete.</Notice>}
+        </Card>
+        <Card title="Items" flush>
+          <div className="table-wrap">
+            <table className="table compact">
+              <thead><tr><th>Item</th><th>Stage</th><th className="num">Ordered</th><th className="num">Dispatched</th><th className="num">To come</th><th>Dispatch date</th></tr></thead>
+              <tbody>
+                {data.lines.map((l) => (
+                  <tr key={l.line_no}>
+                    <td><strong>{l.product}</strong>{l.description && l.description !== l.product && <div className="sub">{l.description}</div>}</td>
+                    <td className="small">{l.phase_label}</td>
+                    <td className="num">{fmtQty(l.quantities.confirmed, l.unit)}{l.quantities.cancelled > 0 && <div className="sub">{fmtQty(l.quantities.cancelled)} cancelled</div>}</td>
+                    <td className="num">{fmtQty(l.quantities.dispatched)}</td>
+                    <td className="num">{fmtQty(l.quantities.remaining)}</td>
+                    <td className="small">{l.agreed_date ? <>{date(l.agreed_date)} <Badge size="sm" tone="amber">revised</Badge></> : l.promised_date ? date(l.promised_date) : <span className="muted">To be confirmed</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </Card>
-
-        <Card title="Items" flush>
-          <table className="table compact">
-            <thead><tr><th>Item</th><th className="num">Ordered</th><th className="num">Manufactured</th><th className="num">Dispatched</th></tr></thead>
-            <tbody>
-              {data.items.map((i, n) => (
-                <tr key={n}>
-                  <td>{i.description}</td>
-                  <td className="num">{number(i.qty)} {i.unit}</td>
-                  <td className="num">{number(i.qty_produced)}</td>
-                  <td className="num">{number(i.qty_dispatched)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-
         {data.dispatches.length > 0 && (
           <Card title="Shipments" flush>
             {data.dispatches.map((d) => (
-              <div key={d.number} className="action-row">
+              <div key={d.code} className="alert-row">
                 <Icon name="truck" size={16} />
                 <span className="grow small">
-                  <strong>{d.number}</strong>{d.dispatch_type === 'partial' ? ' · partial shipment' : ''}
-                  <div className="tiny muted">{[d.transporter, d.vehicle_number, d.lr_number && `LR ${d.lr_number}`, d.boxes && `${d.boxes} boxes`].filter(Boolean).join(' · ')}</div>
+                  <strong>{d.code}</strong> · {d.items}
+                  <div className="tiny muted">{[d.carrier, d.tracking_no && `LR/AWB ${d.tracking_no}`].filter(Boolean).join(' · ')}</div>
                 </span>
-                <span className="small">{d.delivered_date ? `Delivered ${date(d.delivered_date)}` : d.expected_delivery_date ? `Expected ${date(d.expected_delivery_date)}` : `Dispatched ${date(d.dispatch_date)}`}</span>
+                <span className="small">{d.delivered_at ? `Delivered ${date(d.delivered_at)}` : d.expected_arrival ? `Dispatched ${date(d.dispatch_date)} · expected ${date(d.expected_arrival)}` : `Dispatched ${date(d.dispatch_date)}`}</span>
                 {d.tracking_url && <a href={d.tracking_url} target="_blank" rel="noreferrer" className="small">Track</a>}
               </div>
             ))}
           </Card>
         )}
-
-        {data.updates.length > 0 && (
-          <Card title="Progress updates" flush>
-            {data.updates.map((u, n) => (
-              <div key={n} className="action-row">
-                <span className="grow small">{u.note}</span>
-                <span className="tiny muted nowrap">{dateTime(u.created_at)}</span>
-              </div>
+        {data.notes.length > 0 && (
+          <Card title="Updates from us" flush>
+            {data.notes.map((u, n) => (
+              <div key={n} className="alert-row"><span className="grow small">{u.note}</span><span className="tiny muted nowrap">{dateTime(u.occurred_at)}</span></div>
             ))}
           </Card>
         )}
+        {data.owner && <div className="small muted">Your contact: <strong>{data.owner.name}</strong>{data.owner.phone ? ` · ${data.owner.phone}` : ''}{data.owner.email ? ` · ${data.owner.email}` : ''}</div>}
       </div>
     </PortalShell>
   );

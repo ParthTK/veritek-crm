@@ -1,8 +1,7 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { labelOf, colorOf } from '@shared/constants.js';
 import Icon from './Icon.jsx';
-import { initials } from '../lib/format.js';
+import { initials, time } from '../lib/format.js';
 
 // ------------------------------------------------------------------ toasts
 const ToastContext = createContext(null);
@@ -11,7 +10,7 @@ export function ToastProvider({ children }) {
   const push = useCallback((kind, message) => {
     const id = Math.random().toString(36).slice(2);
     setItems((list) => [...list, { id, kind, message }]);
-    setTimeout(() => setItems((list) => list.filter((t) => t.id !== id)), kind === 'error' ? 6000 : 3500);
+    setTimeout(() => setItems((list) => list.filter((t) => t.id !== id)), kind === 'error' ? 7000 : 3500);
   }, []);
   const api = useMemo(() => ({ success: (m) => push('success', m), error: (m) => push('error', m), info: (m) => push('info', m) }), [push]);
   return (
@@ -31,65 +30,60 @@ export function ToastProvider({ children }) {
 export const useToast = () => useContext(ToastContext);
 
 // ------------------------------------------------------------------ basics
-export function Button({ variant, size, icon, loading, children, className = '', to, ...props }) {
+export function Button({ variant, size, icon, iconRight, loading, children, className = '', to, type = 'button', ...props }) {
   const cls = ['btn', variant, size, !children && icon ? 'icon' : '', className].filter(Boolean).join(' ');
+  const iconSize = size === 'sm' || size === 'xs' ? 14 : 16;
   const content = (
     <>
-      {loading ? <Icon name="refresh" size={size === 'sm' || size === 'xs' ? 13 : 15} className="spin" /> : icon && <Icon name={icon} size={size === 'sm' || size === 'xs' ? 14 : 16} />}
+      {loading ? <Icon name="refresh" size={iconSize} className="spin" /> : icon && <Icon name={icon} size={iconSize} />}
       {children}
+      {iconRight && <Icon name={iconRight} size={iconSize} />}
     </>
   );
   if (to) return <Link to={to} className={cls} {...props}>{content}</Link>;
-  return (
-    <button type="button" className={cls} disabled={loading || props.disabled} {...props}>
-      {content}
-    </button>
-  );
+  return <button type={type} className={cls} disabled={loading || props.disabled} {...props}>{content}</button>;
 }
 
-export function Badge({ color = 'slate', children, dot, size, title }) {
+export function Badge({ tone = 'slate', children, icon, size, title }) {
   return (
-    <span className={`badge ${color} ${size || ''}`} title={title}>
-      {dot && <span className="dot" />}
+    <span className={`badge ${tone} ${size || ''}`} title={title}>
+      {icon && <Icon name={icon} size={size === 'sm' ? 12 : 13} strokeWidth={2.2} />}
       {children}
     </span>
   );
 }
 
-/** Badge for a value from a constants option list (label + colour). */
-export function OptionBadge({ list, value, size, dot }) {
-  if (!value) return <span className="muted">—</span>;
-  return <Badge color={colorOf(list, value)} size={size} dot={dot}>{labelOf(list, value)}</Badge>;
-}
-
-export function Tags({ tags }) {
-  if (!tags?.length) return null;
-  return <span className="row wrap" style={{ gap: 4 }}>{tags.map((t) => <span key={t.name || t} className="tag">{t.name || t}</span>)}</span>;
-}
-
-export function Avatar({ name, size }) {
-  return <span className={`avatar ${size || ''}`} title={name}>{initials(name)}</span>;
+export function Avatar({ name }) {
+  return <span className="avatar" title={name}>{initials(name)}</span>;
 }
 
 export function Spinner({ label = 'Loading…' }) {
+  return <div className="loading"><Icon name="refresh" className="spin" size={16} />{label}</div>;
+}
+
+export function Notice({ tone = 'info', icon, title, children, action }) {
+  const ic = icon || { warn: 'alert', danger: 'alert', success: 'checkCircle', info: 'info' }[tone] || 'info';
   return (
-    <div className="loading">
-      <Icon name="refresh" className="spin" size={16} />
-      {label}
+    <div className={`notice ${tone}`} role={tone === 'danger' ? 'alert' : undefined}>
+      <Icon name={ic} size={17} />
+      <div className="grow">
+        {title && <div className="strong">{title}</div>}
+        {children}
+      </div>
+      {action}
     </div>
   );
 }
 
 export function ErrorState({ error, onRetry }) {
   return (
-    <div className="error-box row between">
-      <span>{error?.message || 'Failed to load'}</span>
-      {onRetry && <Button size="sm" onClick={onRetry}>Retry</Button>}
-    </div>
+    <Notice tone="danger" action={onRetry && <Button size="sm" onClick={onRetry}>Retry</Button>}>
+      {error?.message || 'Failed to load'}
+    </Notice>
   );
 }
 
-export function EmptyState({ icon = 'file', title, message, action }) {
+export function EmptyState({ icon = 'inbox', title, message, action }) {
   return (
     <div className="empty">
       <Icon name={icon} size={34} />
@@ -100,7 +94,7 @@ export function EmptyState({ icon = 'file', title, message, action }) {
   );
 }
 
-export function PageHeader({ title, subtitle, actions, crumbs }) {
+export function PageHeader({ eyebrow, title, subtitle, actions, crumbs }) {
   return (
     <div className="page-header">
       <div className="grow">
@@ -109,11 +103,12 @@ export function PageHeader({ title, subtitle, actions, crumbs }) {
             {crumbs.map((c, i) => (
               <span key={i} className="row" style={{ gap: 6 }}>
                 {c.to ? <Link to={c.to}>{c.label}</Link> : c.label}
-                {i < crumbs.length - 1 && <span>/</span>}
+                {i < crumbs.length - 1 && <span aria-hidden>/</span>}
               </span>
             ))}
           </div>
         )}
+        {eyebrow && <div className="eyebrow">{eyebrow}</div>}
         <h1>{title}</h1>
         {subtitle && <div className="subtitle">{subtitle}</div>}
       </div>
@@ -127,10 +122,8 @@ export function Card({ title, sub, actions, children, flush, className = '', id 
     <section className={`card ${className}`} id={id}>
       {(title || actions) && (
         <div className="card-head">
-          <h2>
-            {title} {sub && <span className="sub">{sub}</span>}
-          </h2>
-          {actions && <div className="row">{actions}</div>}
+          <h2>{title}{sub && <span className="sub">{sub}</span>}</h2>
+          {actions && <div className="row wrap">{actions}</div>}
         </div>
       )}
       <div className={`card-body ${flush ? 'flush' : ''}`}>{children}</div>
@@ -142,10 +135,34 @@ export function Tabs({ tabs, value, onChange }) {
   return (
     <div className="tabs" role="tablist">
       {tabs.filter(Boolean).map((t) => (
-        <button key={t.key} role="tab" aria-selected={value === t.key} className={value === t.key ? 'on' : ''} onClick={() => onChange(t.key)}>
+        <button key={t.key} type="button" role="tab" aria-selected={value === t.key} className={value === t.key ? 'on' : ''} onClick={() => onChange(t.key)}>
           {t.label}
-          {t.count !== undefined && t.count !== null && <span className="count">{t.count}</span>}
+          {t.count !== undefined && t.count !== null && <span className={`count ${t.tone || ''}`}>{t.count}</span>}
         </button>
+      ))}
+    </div>
+  );
+}
+
+export function Chips({ options, value, onChange }) {
+  return (
+    <div className="chips" role="group">
+      {options.filter(Boolean).map((o) => (
+        <button key={o.value} type="button" aria-pressed={value === o.value} className={`chip ${value === o.value ? 'on' : ''} ${o.tone || ''}`} onClick={() => onChange(o.value)}>
+          {o.icon && <Icon name={o.icon} size={15} />}
+          {o.label}
+          {o.count !== undefined && o.count !== null && <span className="n">{o.count}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function Segmented({ options, value, onChange, label }) {
+  return (
+    <div className="segmented" role="group" aria-label={label}>
+      {options.map((o) => (
+        <button key={o.value} type="button" aria-pressed={value === o.value} className={value === o.value ? 'on' : ''} onClick={() => onChange(o.value)}>{o.label}</button>
       ))}
     </div>
   );
@@ -154,25 +171,32 @@ export function Tabs({ tabs, value, onChange }) {
 export function Tile({ label, value, foot, to, alert, icon, title }) {
   const inner = (
     <>
-      <div className="label">{icon && <Icon name={icon} size={14} />}{label}</div>
-      <div className="value">{value}</div>
-      {foot && <div className="foot">{foot}</div>}
+      {icon && <span className="tile-icon"><Icon name={icon} size={20} /></span>}
+      <span className="grow">
+        <div className="label">{label}</div>
+        <div className={`value ${typeof value === 'string' && value.length > 11 ? 'long' : ''}`}>{value}</div>
+        {foot && <div className="foot">{foot}</div>}
+      </span>
     </>
   );
   const cls = `tile ${alert ? 'alert' : ''}`;
   return to ? <Link to={to} className={cls} title={title}>{inner}</Link> : <div className={cls} title={title}>{inner}</div>;
 }
 
-export function KV({ items }) {
+export function Stat({ k, v, d }) {
+  return <div className="stat"><span className="k">{k}</span><span className="v">{v}</span>{d && <span className="d">{d}</span>}</div>;
+}
+
+export function Facts({ items }) {
   return (
-    <dl className="kv">
+    <dl className="facts">
       {items.filter(Boolean).map(([k, v]) => (
-        <FragmentKV key={k} k={k} v={v} />
+        <FactRow key={k} k={k} v={v} />
       ))}
     </dl>
   );
 }
-function FragmentKV({ k, v }) {
+function FactRow({ k, v }) {
   return (
     <>
       <dt>{k}</dt>
@@ -181,64 +205,40 @@ function FragmentKV({ k, v }) {
   );
 }
 
-export function Progress({ value, tone }) {
-  const v = Math.max(0, Math.min(100, Number(value) || 0));
-  return <div className={`progress ${tone || ''}`} role="meter" aria-valuenow={v} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${v}%` }} /></div>;
-}
-
-/** Horizontal stage progress; optional onSelect makes stages clickable. */
-export function Stepper({ steps, current, onSelect, disabled }) {
-  const idx = steps.findIndex((s) => s.value === current);
-  return (
-    <div className="stepper">
-      {steps.map((s, i) => {
-        const state = i < idx ? 'done' : i === idx ? 'current' : '';
-        const clickable = onSelect && !disabled && i !== idx;
-        return (
-          <button key={s.value} type="button" className={`step ${state} ${clickable ? 'clickable' : ''}`} onClick={clickable ? () => onSelect(s.value) : undefined}
-            title={clickable ? `Move to ${s.label}` : s.label} disabled={!clickable && Boolean(onSelect)} style={{ opacity: 1 }}>
-            <span className="bar" />
-            <span className="lbl">{s.label}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 // ------------------------------------------------------------------ form controls
-export function Field({ label, required, hint, error, children, className = '' }) {
+export function Field({ label, required, optional, hint, error, children, className = '', htmlFor }) {
   return (
     <div className={`field ${className}`}>
       {label && (
-        <label>
+        <label htmlFor={htmlFor}>
           {label}
-          {required && <span className="req">*</span>}
+          {required && <span className="req" aria-hidden>*</span>}
+          {optional && <span className="opt">(optional)</span>}
         </label>
       )}
       {children}
-      {error ? <span className="error">{error}</span> : hint && <span className="hint">{hint}</span>}
+      {error ? <span className="error" role="alert">{error}</span> : hint && <span className="hint">{hint}</span>}
     </div>
   );
 }
 
-export function Input({ className = '', ...props }) {
-  return <input className={`input ${className}`} {...props} value={props.value ?? ''} />;
+export function Input({ className = '', invalid, ...props }) {
+  return <input className={`input ${invalid ? 'invalid' : ''} ${className}`} aria-invalid={invalid || undefined} {...props} value={props.value ?? ''} />;
 }
 
-export function Textarea({ className = '', ...props }) {
-  return <textarea className={`textarea ${className}`} {...props} value={props.value ?? ''} />;
+export function Textarea({ className = '', invalid, ...props }) {
+  return <textarea className={`textarea ${invalid ? 'invalid' : ''} ${className}`} aria-invalid={invalid || undefined} {...props} value={props.value ?? ''} />;
 }
 
-/** options: array of {value,label} | strings. */
-export function Select({ options = [], placeholder, className = '', ...props }) {
+/** options: [{ value, label }] | strings. */
+export function Select({ options = [], placeholder, className = '', invalid, ...props }) {
   return (
-    <select className={`select ${className}`} {...props} value={props.value ?? ''}>
+    <select className={`select ${invalid ? 'invalid' : ''} ${className}`} aria-invalid={invalid || undefined} {...props} value={props.value ?? ''}>
       {placeholder !== undefined && <option value="">{placeholder}</option>}
       {options.map((o) => {
         const value = typeof o === 'string' ? o : o.value;
         const label = typeof o === 'string' ? o : o.label;
-        return <option key={value} value={value}>{label}</option>;
+        return <option key={value} value={value} disabled={o.disabled}>{label}</option>;
       })}
     </select>
   );
@@ -253,7 +253,7 @@ export function Checkbox({ label, checked, onChange, ...props }) {
   );
 }
 
-export function SearchBox({ value, onChange, placeholder = 'Search…', delay = 300 }) {
+export function SearchBox({ value, onChange, placeholder = 'Search…', delay = 300, autoFocus }) {
   const [text, setText] = useState(value || '');
   const first = useRef(true);
   useEffect(() => setText(value || ''), [value]);
@@ -270,21 +270,77 @@ export function SearchBox({ value, onChange, placeholder = 'Search…', delay = 
   }, [text]);
   return (
     <div className="search-box">
-      <Icon name="search" size={14} />
-      <input className="input" value={text} placeholder={placeholder} onChange={(e) => setText(e.target.value)} aria-label={placeholder} />
+      <Icon name="search" size={15} />
+      <input className="input" value={text} placeholder={placeholder} onChange={(e) => setText(e.target.value)} aria-label={placeholder} autoFocus={autoFocus} />
     </div>
   );
 }
 
-export function Chips({ options, value, onChange, counts }) {
+/**
+ * Searchable dropdown. `load(q)` returns options [{ value, label, sub }] (async allowed), or pass static
+ * `options` that are filtered locally. Keyboard: arrows, Enter, Escape.
+ */
+export function Combobox({ value, label: selectedLabel, onChange, options, load, placeholder = 'Search…', invalid, id, disabled, minChars = 0, renderEmpty }) {
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState([]);
+  const [hl, setHl] = useState(0);
+  const ref = useRef(null);
+  const listId = useId();
+  useEffect(() => {
+    if (!open) return undefined;
+    if (q.length < minChars) {
+      setItems([]);
+      return undefined;
+    }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const res = load ? await load(q) : (options || []).filter((o) => `${o.label} ${o.sub || ''}`.toLowerCase().includes(q.toLowerCase()));
+      if (!cancelled) {
+        setItems((res || []).slice(0, 50));
+        setHl(0);
+      }
+    }, load ? 200 : 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [q, open, load, options, minChars]);
+  useEffect(() => {
+    const onDoc = (e) => !ref.current?.contains(e.target) && setOpen(false);
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
+  const choose = (o) => {
+    onChange(o);
+    setOpen(false);
+    setQ('');
+  };
+  const shown = selectedLabel ?? (options || []).find((o) => String(o.value) === String(value))?.label ?? '';
   return (
-    <div className="chips">
-      {options.map((o) => (
-        <button key={o.value} type="button" className={`chip ${value === o.value ? 'on' : ''}`} onClick={() => onChange(value === o.value && o.value !== '' ? '' : o.value)}>
-          {o.label}
-          {counts?.[o.value] !== undefined && <span className="n">{counts[o.value]}</span>}
-        </button>
-      ))}
+    <div className="combo" ref={ref}>
+      <input
+        id={id} className={`input ${invalid ? 'invalid' : ''}`} disabled={disabled} role="combobox" aria-expanded={open} aria-controls={listId} aria-autocomplete="list"
+        value={open ? q : shown} placeholder={shown || placeholder}
+        onFocus={() => setOpen(true)} onChange={(e) => { setQ(e.target.value); setOpen(true); }}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); setHl((h) => Math.min(items.length - 1, h + 1)); }
+          if (e.key === 'ArrowUp') { e.preventDefault(); setHl((h) => Math.max(0, h - 1)); }
+          if (e.key === 'Enter' && open && items[hl]) { e.preventDefault(); choose(items[hl]); }
+          if (e.key === 'Escape') setOpen(false);
+        }}
+      />
+      {open && (items.length > 0 || renderEmpty) && (
+        <div className="combo-list" role="listbox" id={listId}>
+          {items.map((o, i) => (
+            <div key={`${o.value}-${i}`} role="option" aria-selected={i === hl} className={`combo-opt ${i === hl ? 'hl' : ''}`} onMouseDown={(e) => { e.preventDefault(); choose(o); }}>
+              <span>{o.label}</span>
+              {o.sub && <span className="s">{o.sub}</span>}
+            </div>
+          ))}
+          {!items.length && renderEmpty?.(q, () => setOpen(false))}
+        </div>
+      )}
     </div>
   );
 }
@@ -315,6 +371,32 @@ export function Modal({ open, title, onClose, children, footer, size, subtitle }
   );
 }
 
+export function Drawer({ open, title, subtitle, onClose, children, footer, wide }) {
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e) => e.key === 'Escape' && onClose?.();
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+  if (!open) return null;
+  return (
+    <>
+      <div className="drawer-overlay" onMouseDown={onClose} />
+      <aside className={`drawer ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-label={typeof title === 'string' ? title : undefined}>
+        <div className="drawer-head">
+          <div className="grow">
+            <h2>{title}</h2>
+            {subtitle && <div className="small muted">{subtitle}</div>}
+          </div>
+          <Button variant="ghost" icon="x" onClick={onClose} aria-label="Close" />
+        </div>
+        <div className="drawer-body">{children}</div>
+        {footer && <div className="drawer-foot">{footer}</div>}
+      </aside>
+    </>
+  );
+}
+
 const ConfirmContext = createContext(null);
 export function ConfirmProvider({ children }) {
   const [state, setState] = useState(null);
@@ -341,8 +423,13 @@ export function Popover({ trigger, children, align = 'right' }) {
   useEffect(() => {
     if (!open) return undefined;
     const onDoc = (e) => !ref.current?.contains(e.target) && setOpen(false);
+    const onKey = (e) => e.key === 'Escape' && setOpen(false);
     document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
   }, [open]);
   return (
     <div ref={ref} style={{ position: 'relative' }}>
@@ -352,56 +439,97 @@ export function Popover({ trigger, children, align = 'right' }) {
   );
 }
 
+/** Shows saving / saved-at / error-with-retry so a failed save is never mistaken for success. */
+export function SaveStatus({ save }) {
+  if (save.saving) return <span className="save-status"><Icon name="refresh" size={13} className="spin" />Saving…</span>;
+  if (save.error && !save.conflict) {
+    const network = save.error.status === 0;
+    return (
+      <span className="save-status error">
+        <Icon name="alert" size={14} />
+        {network ? 'Not saved — connection problem. Your entries are kept.' : save.error.message}
+        {network && <Button size="xs" onClick={save.retry}>Retry</Button>}
+      </span>
+    );
+  }
+  if (save.savedAt) return <span className="save-status"><Icon name="check" size={13} />Saved at {time(save.savedAt)}</span>;
+  return null;
+}
+
+/** When someone else saved first: never silently overwrite — show what is there now and let the user decide. */
+export function ConflictNotice({ save, onReload, fields = [] }) {
+  if (!save.conflict) return null;
+  const cur = save.conflict.details?.current || {};
+  const stale = save.conflict.code === 'stale_report';
+  return (
+    <Notice tone="warn" title={stale ? 'A newer update already exists' : 'Someone else saved changes first'}
+      action={onReload && <Button size="sm" onClick={onReload}>Load latest</Button>}>
+      <div className="small">{save.conflict.message}</div>
+      {fields.length > 0 && (
+        <div className="small mt-8">
+          Current saved values: {fields.filter(([k]) => cur[k] !== undefined).map(([k, label, fmt]) => `${label}: ${fmt ? fmt(cur[k]) : cur[k] ?? '—'}`).join(' · ')}
+        </div>
+      )}
+    </Notice>
+  );
+}
+
 // ------------------------------------------------------------------ data table
 /**
- * columns: [{ key, label, render(row), align: 'num', sort: 'serverSortKey', width, className }]
- * sort: { key, dir } controlled by parent when server-sorted.
+ * columns: [{ key, label, render(row), align: 'num', sort, width }]. On phones, `card(row)` renders a
+ * readable card instead of shrinking the table.
  */
-export function DataTable({ columns, rows, rowKey = 'id', onRowClick, sort, onSort, empty, footer, loading, compact, maxHeight }) {
+export function DataTable({ columns, rows, rowKey = 'id', onRowClick, sort, onSort, empty, loading, compact, card, selectedKey, maxHeight }) {
   const cols = columns.filter(Boolean);
   return (
-    <div className="table-wrap" style={{ maxHeight, opacity: loading && rows?.length ? 0.6 : 1, transition: 'opacity .15s' }}>
-      <table className={`table ${compact ? 'compact' : ''}`}>
-        <thead>
-          <tr>
-            {cols.map((c) => {
-              const sortable = onSort && c.sort;
-              const active = Boolean(c.sort) && sort?.key === c.sort;
+    <>
+      <div className={`table-wrap ${card ? 'responsive' : ''}`} style={{ maxHeight, opacity: loading && rows?.length ? 0.6 : 1 }}>
+        <table className={`table ${compact ? 'compact' : ''}`}>
+          <thead>
+            <tr>
+              {cols.map((c) => {
+                const sortable = onSort && c.sort;
+                const active = Boolean(c.sort) && sort?.key === c.sort;
+                return (
+                  <th key={c.key} className={`${c.align === 'num' ? 'num' : ''} ${sortable ? 'sortable' : ''}`} style={{ width: c.width }} scope="col"
+                    onClick={sortable ? () => onSort({ key: c.sort, dir: active && sort.dir === 'asc' ? 'desc' : 'asc' }) : undefined}
+                    aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined}>
+                    {c.label}
+                    {active && <span aria-hidden> {sort.dir === 'asc' ? '↑' : '↓'}</span>}
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {!rows?.length && !loading && <tr><td colSpan={cols.length}>{empty || <EmptyState title="Nothing here" message="No records match these filters." />}</td></tr>}
+            {!rows?.length && loading && <tr><td colSpan={cols.length}><Spinner /></td></tr>}
+            {rows?.map((row, i) => {
+              const k = (typeof rowKey === 'function' ? rowKey(row) : row[rowKey]) ?? i;
               return (
-                <th key={c.key} className={`${c.align === 'num' ? 'num' : ''} ${sortable ? 'sortable' : ''}`} style={{ width: c.width }}
-                  onClick={sortable ? () => onSort({ key: c.sort, dir: active && sort.dir === 'desc' ? 'asc' : 'desc' }) : undefined}
-                  aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined}>
-                  {c.label}
-                  {active && <span aria-hidden> {sort.dir === 'asc' ? '↑' : '↓'}</span>}
-                </th>
+                <tr key={k} className={`${onRowClick ? 'clickable' : ''} ${selectedKey !== undefined && selectedKey === k ? 'selected' : ''}`}
+                  onClick={onRowClick ? (e) => !e.target.closest('a,button,input,select,label') && onRowClick(row) : undefined}
+                  tabIndex={onRowClick ? 0 : undefined} onKeyDown={onRowClick ? (e) => e.key === 'Enter' && e.target === e.currentTarget && onRowClick(row) : undefined}>
+                  {cols.map((c) => (
+                    <td key={c.key} className={c.align === 'num' ? 'num' : ''}>{c.render ? c.render(row) : row[c.key] ?? <span className="muted">—</span>}</td>
+                  ))}
+                </tr>
               );
             })}
-          </tr>
-        </thead>
-        <tbody>
-          {!rows?.length && !loading && (
-            <tr>
-              <td colSpan={cols.length}>{empty || <EmptyState title="Nothing here yet" message="Try adjusting the filters." />}</td>
-            </tr>
-          )}
-          {!rows?.length && loading && (
-            <tr>
-              <td colSpan={cols.length}><Spinner /></td>
-            </tr>
-          )}
+          </tbody>
+        </table>
+      </div>
+      {card && (
+        <div className="mobile-cards">
+          {!rows?.length && !loading && (empty || <EmptyState title="Nothing here" message="No records match these filters." />)}
           {rows?.map((row, i) => (
-            <tr key={row[rowKey] ?? i} className={onRowClick ? 'clickable' : ''} onClick={onRowClick ? (e) => !e.target.closest('a,button,input,select,label') && onRowClick(row) : undefined}>
-              {cols.map((c) => (
-                <td key={c.key} className={`${c.align === 'num' ? 'num' : ''} ${c.className || ''}`}>
-                  {c.render ? c.render(row) : row[c.key] ?? <span className="muted">—</span>}
-                </td>
-              ))}
-            </tr>
+            <div key={(typeof rowKey === 'function' ? rowKey(row) : row[rowKey]) ?? i} className="m-card" onClick={onRowClick ? () => onRowClick(row) : undefined} role={onRowClick ? 'button' : undefined} tabIndex={onRowClick ? 0 : undefined}>
+              {card(row)}
+            </div>
           ))}
-        </tbody>
-        {footer && <tfoot>{footer}</tfoot>}
-      </table>
-    </div>
+        </div>
+      )}
+    </>
   );
 }
 

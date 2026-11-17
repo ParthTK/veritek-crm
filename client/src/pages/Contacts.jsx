@@ -1,47 +1,62 @@
-import { Link } from 'react-router-dom';
-import { CONTACT_ROLES, CUSTOMER_TYPES, CUSTOMER_STATUSES, labelOf } from '@shared/constants.js';
+// Contact directory across all visible customers: who to call, how, and when they were last reached.
+import { Link, useNavigate } from 'react-router-dom';
+import { CONTACT_ROLES } from '@shared/constants.js';
 import { useApi, useUrlFilters } from '../lib/hooks.js';
 import { timeAgo, downloadCsv } from '../lib/format.js';
-import { Button, Card, DataTable, OptionBadge, PageHeader, Pagination, SearchBox, Select, Badge } from '../components/ui.jsx';
-import { ContactActions, useMeta } from '../components/domain.jsx';
-import { api } from '../api.js';
+import { Badge, Button, Card, DataTable, ErrorState, PageHeader, Pagination, SearchBox, Select, EmptyState } from '../components/ui.jsx';
+import Icon from '../components/Icon.jsx';
+
+const waLink = (phone) => `https://wa.me/${String(phone || '').replace(/[^\d]/g, '')}`;
 
 export default function Contacts() {
-  const meta = useMeta();
+  const navigate = useNavigate();
   const [f, setFilter] = useUrlFilters();
-  const query = { ...f, pageSize: 50 };
-  const { data, loading } = useApi('/contacts', query);
-  return (
-    <div>
-      <PageHeader title="Contacts" subtitle="Owners, purchase, technical, accounts and site contacts across all customers"
-        actions={<Button icon="download" onClick={async () => {
-          const all = await api.get('/contacts', { ...query, pageSize: 500, page: 1 });
-          downloadCsv('contacts.csv', [
-            { key: 'name', label: 'Name' }, { key: 'designation', label: 'Designation' }, { key: 'contact_role', label: 'Role', csv: (c) => labelOf(CONTACT_ROLES, c.contact_role) },
-            { key: 'customer_name', label: 'Company' }, { key: 'phone', label: 'Phone' }, { key: 'whatsapp', label: 'WhatsApp' }, { key: 'email', label: 'Email' },
-            { key: 'preferred_channel', label: 'Preferred channel' }, { key: 'city', label: 'City' },
-          ], all.rows);
-        }}>Export</Button>} />
-      <div className="filter-bar">
-        <SearchBox value={f.q} onChange={(q) => setFilter({ q })} placeholder="Name, phone, email, company" />
-        <Select className="sm" value={f.contact_role} onChange={(e) => setFilter({ contact_role: e.target.value })} placeholder="Any role" options={CONTACT_ROLES} />
-        <Select className="sm" value={f.customer_type} onChange={(e) => setFilter({ customer_type: e.target.value })} placeholder="Any customer type" options={CUSTOMER_TYPES} />
-        <Select className="sm" value={f.region_id} onChange={(e) => setFilter({ region_id: e.target.value })} placeholder="Any region" options={meta.regions.map((r) => ({ value: r.id, label: r.name }))} />
-        <Select className="sm" value={f.sort} onChange={(e) => setFilter({ sort: e.target.value })} placeholder="Sort by name" options={[{ value: 'last_contacted', label: 'Recently contacted' }]} />
+  const { data, loading, error, reload } = useApi('/contacts', { ...f, pageSize: 100 });
+  const columns = [
+    { key: 'name', label: 'Contact', render: (c) => (
+      <div className="col" style={{ gap: 0 }}>
+        <span className="strong">{c.name || <span className="muted">No name</span>} {c.is_primary ? <Badge size="sm" tone="violet">Primary</Badge> : null}</span>
+        <span className="tiny muted">{[c.role, c.contact_role_label].filter(Boolean).join(' · ')}</span>
       </div>
+    ) },
+    { key: 'company', label: 'Company', render: (c) => <div className="col" style={{ gap: 0 }}><Link to={`/customers/${c.customer_id}`}>{c.company_name}</Link><span className="tiny muted">{c.city}</span></div> },
+    { key: 'reach', label: 'Reach', render: (c) => (
+      <div className="row wrap" style={{ gap: 6 }}>
+        {c.do_not_contact ? <Badge size="sm" tone="red" icon="ban">Do not contact</Badge> : (
+          <>
+            {c.phone_raw && <a className="btn xs" href={`tel:${c.phone_raw.replace(/\s/g, '')}`} title={c.phone_raw}><Icon name="phone" size={13} />{c.phone_raw}</a>}
+            {(c.whatsapp_raw || c.phone_raw) && <a className="btn xs" href={waLink(c.whatsapp_raw || c.phone_raw)} target="_blank" rel="noreferrer" aria-label="WhatsApp"><Icon name="whatsapp" size={13} /></a>}
+            {c.email_raw && <a className="btn xs" href={`mailto:${c.email_raw}`} title={c.email_raw}><Icon name="mail" size={13} /></a>}
+          </>
+        )}
+      </div>
+    ) },
+    { key: 'pref', label: 'Prefers', render: (c) => <span className="small">{c.preferred_channel || '—'}</span> },
+    { key: 'last', label: 'Last contacted', render: (c) => (c.last_contact_at ? <span className="small">{timeAgo(c.last_contact_at)}</span> : <span className="muted small">Never</span>) },
+  ];
+  return (
+    <div className="stack">
+      <PageHeader title="Contacts" subtitle="Everyone at the companies you can see — call, WhatsApp or email in one click"
+        actions={<Button icon="download" onClick={() => downloadCsv('contacts.csv', [
+          { key: 'name', label: 'Name' }, { key: 'role', label: 'Designation' }, { key: 'contact_role_label', label: 'Role' }, { key: 'company_name', label: 'Company' }, { key: 'city', label: 'City' },
+          { key: 'phone_raw', label: 'Phone' }, { key: 'email_raw', label: 'Email' }, { key: 'last_contact_at', label: 'Last contacted' },
+        ], (data?.rows || []).filter((c) => !c.do_not_contact))}>Export this page</Button>} />
+      <div className="filter-bar">
+        <SearchBox value={f.q} onChange={(q) => setFilter({ q })} placeholder="Name, phone, email, designation or company" />
+        <Select aria-label="Contact role" value={f.contact_role || ''} onChange={(e) => setFilter({ contact_role: e.target.value })} placeholder="Any role" options={CONTACT_ROLES} />
+      </div>
+      {error && <ErrorState error={error} onRetry={reload} />}
       <Card flush>
-        <DataTable rows={data?.rows} loading={loading} columns={[
-          { key: 'name', label: 'Name', render: (c) => <div className="col" style={{ gap: 0 }}><span className="row" style={{ gap: 6 }}><strong>{c.name}</strong>{c.is_primary ? <Badge size="sm" color="blue">Primary</Badge> : null}</span><span className="tiny muted">{c.designation}</span></div> },
-          { key: 'role', label: 'Role', render: (c) => <span className="small">{labelOf(CONTACT_ROLES, c.contact_role)}</span> },
-          { key: 'company', label: 'Company', render: (c) => <div className="col" style={{ gap: 0 }}><Link to={`/customers/${c.customer_id}`}>{c.customer_name}</Link><span className="tiny muted">{labelOf(CUSTOMER_TYPES, c.customer_type)} · {c.city}</span></div> },
-          { key: 'status', label: 'Account', render: (c) => <OptionBadge list={CUSTOMER_STATUSES} value={c.customer_status} size="sm" /> },
-          { key: 'phone', label: 'Phone / email', render: (c) => <div className="col small" style={{ gap: 0 }}><span>{c.phone}</span><span className="muted">{c.email}</span></div> },
-          { key: 'channel', label: 'Prefers', render: (c) => <span className="small">{c.preferred_channel}</span> },
-          { key: 'last', label: 'Last contacted', render: (c) => <span className="small muted">{c.last_contacted ? timeAgo(c.last_contacted) : 'Never'}</span> },
-          { key: 'owner', label: 'Account owner', render: (c) => <span className="small">{c.owner_name}</span> },
-          { key: 'actions', label: '', render: (c) => <ContactActions phone={c.phone} whatsapp={c.whatsapp} email={c.email} /> },
-        ]} />
-        <Pagination page={Number(f.page) || 1} pageSize={50} count={data?.count || 0} onChange={(page) => setFilter({ page })} />
+        <DataTable columns={columns} rows={data?.rows} loading={loading} onRowClick={(c) => navigate(`/customers/${c.customer_id}`)}
+          empty={<EmptyState icon="contacts" title="No contacts found" message="Contacts are added on each customer's page." />}
+          card={(c) => (
+            <>
+              <div className="row between"><strong>{c.name || 'No name'}</strong><span className="tiny muted">{c.last_contact_at ? timeAgo(c.last_contact_at) : 'Never contacted'}</span></div>
+              <div className="small">{c.company_name}{c.role ? ` · ${c.role}` : ''}</div>
+              {!c.do_not_contact && <div className="row wrap">{c.phone_raw && <a className="btn sm" href={`tel:${c.phone_raw.replace(/\s/g, '')}`}><Icon name="phone" size={14} /> Call</a>}{c.email_raw && <a className="btn sm" href={`mailto:${c.email_raw}`}><Icon name="mail" size={14} /> Email</a>}</div>}
+            </>
+          )} />
+        <Pagination page={data?.page} pageSize={data?.pageSize} count={data?.count} onChange={(page) => setFilter({ page })} />
       </Card>
     </div>
   );

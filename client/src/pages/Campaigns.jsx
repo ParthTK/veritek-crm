@@ -1,100 +1,105 @@
+// Exhibitions & campaigns: each event with its enquiry funnel, quotations, orders, revenue and cost.
+// Money stays per currency; ROI only where cost and revenue share a currency.
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { CAMPAIGN_TYPES, labelOf } from '@shared/constants.js';
+import { Link, useNavigate } from 'react-router-dom';
+import { CAMPAIGN_TYPES, CAMPAIGN_STATUSES, CURRENCIES, toneOf } from '@shared/constants.js';
 import { api } from '../api.js';
 import { useAuth } from '../auth.jsx';
-import { useApi } from '../lib/hooks.js';
-import { inr, inrCompact, number, pct, date } from '../lib/format.js';
-import { Badge, Button, Card, Field, Input, Modal, PageHeader, Select, Spinner, Textarea, Tile, useToast, EmptyState } from '../components/ui.jsx';
-import { UserSelect, useMeta } from '../components/domain.jsx';
+import { useApi, useSave, useUrlFilters } from '../lib/hooks.js';
+import { date, number, pct, compactByCurrency, compactMoney } from '../lib/format.js';
+import { Badge, Button, Card, Chips, EmptyState, ErrorState, Field, Input, Modal, PageHeader, SaveStatus, Select, Spinner, Textarea } from '../components/ui.jsx';
+import { UserSelect } from '../components/domain.jsx';
 
 export default function Campaigns() {
   const { can } = useAuth();
-  const { data, reload } = useApi('/campaigns');
+  const navigate = useNavigate();
+  const [f, setFilter] = useUrlFilters();
+  const { data, error, loading, reload } = useApi('/campaigns', { status: f.status, type: f.type });
   const [editing, setEditing] = useState(null);
-  if (!data) return <Spinner />;
-  const totals = data.reduce((a, c) => ({
-    cost: a.cost + c.cost, leads: a.leads + c.metrics.leads, orders: a.orders + c.metrics.orders, revenue: a.revenue + (c.metrics.revenue || 0),
-  }), { cost: 0, leads: 0, orders: 0, revenue: 0 });
-
+  const values = can('values.view');
   return (
     <div className="stack">
-      <PageHeader title="Exhibitions & campaigns" subtitle="Leads collected, conversion and return on every event"
+      <PageHeader title="Exhibitions & campaigns" subtitle="Enquiries, follow-ups, quotations and orders from each event — with cost and return where the currency matches"
         actions={can('campaigns.edit') && <Button variant="primary" icon="plus" onClick={() => setEditing({})}>New campaign</Button>} />
-      <div className="tiles">
-        <Tile label="Campaigns" value={number(data.length)} />
-        <Tile label="Total spend" value={inrCompact(totals.cost)} />
-        <Tile label="Leads collected" value={number(totals.leads)} foot={totals.leads ? `${inr(Math.round(totals.cost / totals.leads))} per lead` : ''} />
-        <Tile label="Orders won" value={number(totals.orders)} />
-        <Tile label="Revenue generated" value={inrCompact(totals.revenue)} foot={totals.cost ? `${number(totals.revenue / totals.cost, 1)}× return on spend` : ''} />
+      <div className="row wrap between">
+        <Chips options={[{ value: '', label: 'All' }, ...CAMPAIGN_STATUSES]} value={f.status || ''} onChange={(v) => setFilter({ status: v })} />
+        <Select aria-label="Type" value={f.type || ''} onChange={(e) => setFilter({ type: e.target.value })} placeholder="All types" options={CAMPAIGN_TYPES} style={{ width: 'auto' }} />
       </div>
+      {error && <ErrorState error={error} onRetry={reload} />}
+      {!data && loading && <Spinner />}
+      {data && !data.length && <EmptyState icon="campaigns" title="No campaigns yet" message="Create one per exhibition, dealer meet or launch, then tag the enquiries it brings in." />}
       <div className="grid grid-3">
-        {data.map((c) => {
+        {(data || []).map((c) => {
           const m = c.metrics;
           return (
-            <Card key={c.id} title={<Link to={`/campaigns/${c.id}`}>{c.name}</Link>} sub={labelOf(CAMPAIGN_TYPES, c.type)}
-              actions={<Badge color={c.status === 'completed' ? 'slate' : c.status === 'active' ? 'green' : 'blue'}>{c.status}</Badge>}>
-              <div className="stack-sm">
-                <div className="small muted">{c.location} · {date(c.start_date)}{c.end_date && c.end_date !== c.start_date ? ` – ${date(c.end_date)}` : ''}{c.stall ? ` · ${c.stall}` : ''}</div>
-                <div className="grid grid-3" style={{ gap: 8 }}>
-                  <div><div className="tiny muted">Leads</div><strong>{number(m.leads)}</strong></div>
-                  <div><div className="tiny muted">Quotations</div><strong>{number(m.quotations)}</strong></div>
-                  <div><div className="tiny muted">Orders</div><strong>{number(m.orders)}</strong></div>
-                  {m.revenue !== undefined && <div><div className="tiny muted">Revenue</div><strong>{inrCompact(m.revenue)}</strong></div>}
-                  {m.cost !== undefined && <div><div className="tiny muted">Cost</div><strong>{inrCompact(m.cost)}</strong></div>}
-                  <div><div className="tiny muted">Conversion</div><strong>{pct(m.conversion_pct)}</strong></div>
+            <Card key={c.id} className="clickable">
+              <div className="stack-sm" onClick={() => navigate(`/campaigns/${c.id}`)} role="link" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && navigate(`/campaigns/${c.id}`)} style={{ cursor: 'pointer' }}>
+                <div className="row between top">
+                  <div className="grow">
+                    <Link to={`/campaigns/${c.id}`} className="strong" onClick={(e) => e.stopPropagation()}>{c.name}</Link>
+                    <div className="tiny muted">{c.type_label}{c.location ? ` · ${c.location}` : ''}</div>
+                    <div className="tiny muted">{c.start_date ? `${date(c.start_date)}${c.end_date && c.end_date !== c.start_date ? ` – ${date(c.end_date)}` : ''}` : 'Dates not set'}{c.owner_name ? ` · ${c.owner_name}` : ''}</div>
+                  </div>
+                  <Badge size="sm" tone={toneOf(CAMPAIGN_STATUSES, c.status)}>{c.status_label}</Badge>
                 </div>
-                {m.roi_multiple !== null && m.roi_multiple !== undefined && (
-                  <div className={`small ${m.roi_multiple >= 1 ? 'success-text' : 'warning-text'}`}>
-                    {number(m.roi_multiple, 1)}× revenue against spend{m.pipeline_value ? ` · ${inrCompact(m.pipeline_value)} still open` : ''}
+                <div className="grid grid-3" style={{ gap: 8 }}>
+                  <MiniStat k="Enquiries" v={number(m.enquiries)} d={c.target_leads ? `of ${c.target_leads} target` : null} />
+                  <MiniStat k="Quoted" v={number(m.quoted)} />
+                  <MiniStat k="Won" v={number(m.won)} d={m.conversion_pct !== null ? `${pct(m.conversion_pct)} conversion` : null} />
+                </div>
+                {m.target_progress_pct !== null && <div className="progress" title={`${m.target_progress_pct}% of the enquiry target`}><span style={{ width: `${Math.min(100, m.target_progress_pct)}%` }} /></div>}
+                {values && (
+                  <div className="small">
+                    <div className="row between"><span className="muted">Order value</span><strong>{compactByCurrency(m.revenue)}</strong></div>
+                    <div className="row between"><span className="muted">Open pipeline</span><span>{compactByCurrency(m.pipeline)}</span></div>
+                    <div className="row between"><span className="muted">Cost</span><span>{m.cost_minor ? compactMoney(m.cost_minor, m.cost_currency) : '—'}{m.roi_multiple !== null && m.roi_multiple !== undefined ? ` · ${number(m.roi_multiple, 1)}× return` : ''}</span></div>
                   </div>
                 )}
-                <Button size="sm" to={`/campaigns/${c.id}`}>Open report</Button>
               </div>
             </Card>
           );
         })}
-        {!data.length && <EmptyState title="No campaigns yet" message="Add an exhibition, dealer meet or product launch to track its leads and ROI." />}
       </div>
-      {editing && <CampaignModal campaign={editing.id ? editing : null} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); reload(); }} />}
+      {editing && <CampaignForm campaign={editing.id ? editing : null} onClose={() => setEditing(null)} onSaved={(r) => { setEditing(null); reload(); if (r?.id) navigate(`/campaigns/${r.id}`); }} />}
     </div>
   );
 }
 
-export function CampaignModal({ campaign, onClose, onSaved }) {
-  const toast = useToast();
-  const meta = useMeta();
-  const [form, setForm] = useState(campaign || { type: 'exhibition', status: 'planned' });
-  const [busy, setBusy] = useState(false);
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e?.target ? e.target.value : e }));
-  const save = async () => {
-    setBusy(true);
-    try {
-      if (campaign?.id) await api.put(`/campaigns/${campaign.id}`, form);
-      else await api.post('/campaigns', form);
-      toast.success('Campaign saved');
-      onSaved();
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setBusy(false);
-    }
-  };
+function MiniStat({ k, v, d }) {
+  return <div className="col" style={{ gap: 0 }}><span className="tiny muted">{k}</span><span className="strong" style={{ fontSize: 18 }}>{v}</span>{d && <span className="tiny muted">{d}</span>}</div>;
+}
+
+export function CampaignForm({ campaign, onClose, onSaved }) {
+  const save = useSave();
+  const [f, setF] = useState(() => ({
+    name: campaign?.name || '', type: campaign?.type || 'exhibition', status: campaign?.status || 'planned', location: campaign?.location || '', stall: campaign?.stall || '',
+    start_date: campaign?.start_date || '', end_date: campaign?.end_date || '', cost: campaign?.cost_minor ? String(campaign.cost_minor / 100) : '', cost_currency: campaign?.cost_currency || 'INR',
+    target_leads: campaign?.target_leads ?? '', description: campaign?.description || '', owner_id: campaign?.owner_id || null,
+  }));
+  const set = (patch) => setF((x) => ({ ...x, ...patch }));
+  const err = (k) => save.fields?.[k];
+  const submit = () => save.run(async () => {
+    const r = campaign ? await api.put(`/campaigns/${campaign.id}`, f) : await api.post('/campaigns', f);
+    onSaved(r);
+    return r;
+  });
   return (
-    <Modal open onClose={onClose} title={campaign?.id ? `Edit ${campaign.name}` : 'New campaign'}
-      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} onClick={save}>Save</Button></>}>
+    <Modal open size="lg" onClose={onClose} title={campaign ? `Edit ${campaign.name}` : 'New campaign'}
+      footer={<><SaveStatus save={save} /><Button onClick={onClose}>Cancel</Button><Button variant="primary" loading={save.saving} onClick={submit}>Save campaign</Button></>}>
       <div className="form-grid">
-        <Field label="Name" required className="full"><Input value={form.name} onChange={set('name')} placeholder="e.g. Elecrama 2026" /></Field>
-        <Field label="Type"><Select value={form.type} onChange={set('type')} options={CAMPAIGN_TYPES} /></Field>
-        <Field label="Status"><Select value={form.status} onChange={set('status')} options={[{ value: 'planned', label: 'Planned' }, { value: 'active', label: 'Running' }, { value: 'completed', label: 'Completed' }]} /></Field>
-        <Field label="Location"><Input value={form.location} onChange={set('location')} /></Field>
-        <Field label="Stall / booth"><Input value={form.stall} onChange={set('stall')} /></Field>
-        <Field label="Start date"><Input type="date" value={form.start_date} onChange={set('start_date')} /></Field>
-        <Field label="End date"><Input type="date" value={form.end_date} onChange={set('end_date')} /></Field>
-        <Field label="Cost of participation (₹)"><Input type="number" min="0" value={form.cost} onChange={set('cost')} /></Field>
-        <Field label="Target leads"><Input type="number" min="0" value={form.target_leads} onChange={set('target_leads')} /></Field>
-        <Field label="Owner" className="full"><UserSelect value={form.owner_id} onChange={set('owner_id')} /></Field>
-        <Field label="Description" className="full"><Textarea rows={2} value={form.description} onChange={set('description')} /></Field>
+        <Field label="Name" required className="full" error={err('name')}><Input value={f.name} onChange={(e) => set({ name: e.target.value })} placeholder="e.g. ELECRAMA 2026" /></Field>
+        <Field label="Type" error={err('type')}><Select value={f.type} onChange={(e) => set({ type: e.target.value })} options={CAMPAIGN_TYPES} /></Field>
+        <Field label="Status" error={err('status')}><Select value={f.status} onChange={(e) => set({ status: e.target.value })} options={CAMPAIGN_STATUSES} /></Field>
+        <Field label="Start" error={err('start_date')}><Input type="date" value={f.start_date} onChange={(e) => set({ start_date: e.target.value })} /></Field>
+        <Field label="End" error={err('end_date')}><Input type="date" value={f.end_date} onChange={(e) => set({ end_date: e.target.value })} /></Field>
+        <Field label="Location" optional><Input value={f.location} onChange={(e) => set({ location: e.target.value })} /></Field>
+        <Field label="Stall / reference" optional><Input value={f.stall} onChange={(e) => set({ stall: e.target.value })} /></Field>
+        <Field label="Cost" optional error={err('cost')} hint="Stall, travel, collateral — before tax">
+          <div className="row"><Input inputMode="decimal" value={f.cost} onChange={(e) => set({ cost: e.target.value })} /><Select value={f.cost_currency} onChange={(e) => set({ cost_currency: e.target.value })} options={CURRENCIES} style={{ width: 96 }} aria-label="Cost currency" /></div>
+        </Field>
+        <Field label="Enquiry target" optional error={err('target_leads')}><Input type="number" min={0} value={f.target_leads} onChange={(e) => set({ target_leads: e.target.value })} /></Field>
+        <Field label="Owner" optional error={err('owner_id')}><UserSelect value={f.owner_id} onChange={(v) => set({ owner_id: v })} filter={(p) => ['admin', 'coordinator', 'sales'].includes(p.group)} /></Field>
+        <Field label="Description" optional className="full"><Textarea rows={2} value={f.description} onChange={(e) => set({ description: e.target.value })} maxLength={1000} /></Field>
       </div>
     </Modal>
   );

@@ -2,7 +2,7 @@
 // 2px lines, hairline grid, fixed categorical order, legend for 2+ series, hover tooltips.
 import { useState } from 'react';
 import { useElementWidth } from '../lib/hooks.js';
-import { formatValue, inrCompact, number } from '../lib/format.js';
+import { formatValue, compactMoney, number } from '../lib/format.js';
 
 export const seriesColor = (i) => `var(--series-${(i % 8) + 1})`;
 
@@ -16,7 +16,7 @@ function niceScale(maxValue, ticks = 4) {
 }
 
 function axisFormat(value, format) {
-  if (format === 'currency') return inrCompact(value).replace('.00', '');
+  if (typeof format === 'string' && format.startsWith('money')) return compactMoney(value, format.split(':')[1] || 'INR');
   if (format === 'pct') return `${number(value)}%`;
   if (format === 'days') return `${number(value)}d`;
   return number(value, value < 10 && value % 1 ? 1 : 0);

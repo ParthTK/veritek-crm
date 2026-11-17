@@ -1,202 +1,309 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+// Domain building blocks shared across pages: reference data, pickers, status labels, timeline, documents.
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  ACTIVITY_TYPES, CONTACT_ROLES, ROLES, labelOf,
+  ENQUIRY_STAGES, LINE_STATES, OUTCOMES, PHASES, COMM_STATES, REACTIVATION_STATUSES, QUOTE_STATUSES, APPROVAL_STATUSES, COUNTRIES, SEGMENTS, ROLES, DEPARTMENTS, labelOf, toneOf, TASK_PURPOSES,
 } from '@shared/constants.js';
-import { api, fileUrl, uploadFile } from '../api.js';
-import { useApi } from '../lib/hooks.js';
-import { dateTime, date, fileSize, inrCompact, relativeDay, todayStr, addDaysStr } from '../lib/format.js';
-import Icon from './Icon.jsx';
-import { Button, Field, Input, Modal, Select, Textarea, useToast, Chips, EmptyState, Spinner, Badge } from './ui.jsx';
+import { datePresets } from '@shared/dates.js';
+import { api, openFile, uploadFile } from '../api.js';
 import { useAuth } from '../auth.jsx';
+import { date, dateTime, relDay, setZone, todayLocal, fileSize, money } from '../lib/format.js';
+import Icon, { CHANNEL_ICON } from './Icon.jsx';
+import { Badge, Button, Combobox, Field, Input, Select, Spinner, useToast, Notice, Checkbox } from './ui.jsx';
 
-// ------------------------------------------------------------------ meta (reference data)
+// ------------------------------------------------------------------ reference data
 const MetaContext = createContext(null);
 export function MetaProvider({ children }) {
-  const { data, reload } = useApi('/meta');
-  return <MetaContext.Provider value={{ ...(data || { regions: [], factories: [], users: [], categories: [], campaigns: [], tags: [], settings: {}, states: [] }), loaded: Boolean(data), reload }}>{children}</MetaContext.Provider>;
+  const [meta, setMeta] = useState(null);
+  const [error, setError] = useState(null);
+  const load = useCallback(() => api.get('/meta').then((m) => {
+    setZone(m.timezone, m.today);
+    setMeta(m);
+  }).catch(setError), []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  if (error) return <div className="content"><Notice tone="danger" title="Could not load the application">{error.message} <Button size="sm" onClick={load}>Retry</Button></Notice></div>;
+  if (!meta) return <Spinner label="Loading…" />;
+  return <MetaContext.Provider value={{ ...meta, reload: load }}>{children}</MetaContext.Provider>;
 }
 export const useMeta = () => useContext(MetaContext);
 
-export const userOptions = (users, roles) => users
-  .filter((u) => u.active && (!roles || roles.includes(u.role)))
-  .map((u) => ({ value: u.id, label: `${u.name} · ${labelOf(ROLES, u.role)}` }));
-
-export const SALES_ROLES = ['sales_executive', 'regional_manager', 'sales_head', 'management'];
-
-export function UserSelect({ roles, placeholder = 'Unassigned', ...props }) {
-  const { users } = useMeta();
-  return <Select options={userOptions(users, roles)} placeholder={placeholder} {...props} />;
+export function useOptions(category, { includeInactive = false, keep } = {}) {
+  const meta = useMeta();
+  return useMemo(() => (meta.dropdowns[category] || [])
+    .filter((o) => o.active || includeInactive || o.code === keep)
+    .map((o) => ({ value: o.code, label: o.active ? o.label : `${o.label} (no longer used)`, requires_note: o.requires_note })), [meta, category, includeInactive, keep]);
+}
+export function useOptionLabel() {
+  const meta = useMeta();
+  return useCallback((category, code) => (code ? meta.dropdowns[category]?.find((o) => o.code === code)?.label || String(code).replace(/_/g, ' ') : ''), [meta]);
+}
+export function usePeople({ activeOnly = true } = {}) {
+  const meta = useMeta();
+  return useMemo(() => meta.people.filter((p) => !activeOnly || p.active), [meta, activeOnly]);
 }
 
-// ------------------------------------------------------------------ customer picker
-export function CustomerPicker({ value, onChange, placeholder = 'Search company…', allowCreate, onCreate }) {
-  const [text, setText] = useState('');
-  const [open, setOpen] = useState(false);
-  const [results, setResults] = useState([]);
-  const [selected, setSelected] = useState(null);
-  const ref = useRef(null);
+export function OptionSelect({ category, value, onChange, placeholder = 'Choose…', invalid, id, exclude = [] }) {
+  const options = useOptions(category, { keep: value }).filter((o) => !exclude.includes(o.value));
+  return <Select id={id} options={options} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} invalid={invalid} />;
+}
 
-  useEffect(() => {
-    if (value && (!selected || selected.id !== Number(value))) {
-      api.get(`/customers/${value}`).then((c) => setSelected({ id: c.id, name: c.name, city: c.city })).catch(() => {});
-    }
-    if (!value) setSelected(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
+/** Named people — including department heads who do not sign in — shown with their department. */
+export function UserSelect({ value, onChange, placeholder = 'Choose a person…', invalid, id, filter }) {
+  const people = usePeople();
+  const options = people.filter((p) => !filter || filter(p)).map((p) => ({ value: String(p.id), label: `${p.name}${p.department ? ` — ${labelOf(DEPARTMENTS, p.department)}` : ''}` }));
+  return <Select id={id} options={options} value={value ? String(value) : ''} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)} placeholder={placeholder} invalid={invalid} />;
+}
 
-  useEffect(() => {
-    if (!open) return undefined;
-    const t = setTimeout(() => {
-      api.get('/customers', { q: text, pageSize: 12, sort: 'name', dir: 'asc' }).then((r) => setResults(r.rows)).catch(() => setResults([]));
-    }, 200);
-    return () => clearTimeout(t);
-  }, [text, open]);
+export function personName(meta, id) {
+  return meta.people.find((p) => p.id === id)?.name || '—';
+}
 
-  useEffect(() => {
-    const onDoc = (e) => !ref.current?.contains(e.target) && setOpen(false);
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
+export function ProductSelect({ value, onChange, invalid, id, allowUnspecified = true }) {
+  const meta = useMeta();
+  const options = [
+    ...(allowUnspecified ? [{ value: '', label: 'Unspecified / needs clarification', sub: 'Describe the requirement instead' }] : []),
+    ...meta.products.filter((p) => p.active || p.id === value).map((p) => ({ value: p.id, label: p.code, sub: `${p.name}${p.family ? ` · ${p.family}` : ''}` })),
+  ];
+  const current = meta.products.find((p) => p.id === value);
+  return <Combobox id={id} value={value ?? ''} label={current ? current.code : allowUnspecified && value === null ? 'Unspecified / needs clarification' : ''} options={options} onChange={(o) => onChange(o.value === '' ? null : o.value)} placeholder="Search model…" invalid={invalid} />;
+}
+
+export function CountrySelect({ value, onChange, id }) {
+  return <Select id={id} options={COUNTRIES} value={value} onChange={(e) => onChange(e.target.value || null)} placeholder="Unknown" />;
+}
+
+/** Date input with presets (Today, Next working day, +2 working days, +1 week…). */
+export function DateField({ label, value, onChange, error, required, hint, id, presets = true, min }) {
+  const meta = useMeta();
+  const list = presets ? datePresets(todayLocal(), meta.settings.calendar) : [];
+  return (
+    <Field label={label} required={required} error={error} hint={hint} htmlFor={id}>
+      <Input id={id} type="date" value={value || ''} min={min} onChange={(e) => onChange(e.target.value)} invalid={Boolean(error)} />
+      {presets && (
+        <div className="presets">
+          {list.map((p) => <button key={p.label} type="button" className={value === p.value ? 'on' : ''} onClick={() => onChange(p.value)}>{p.label}</button>)}
+        </div>
+      )}
+    </Field>
+  );
+}
+
+export function PurposeInput({ value, onChange, invalid, id, list = 'task-purposes' }) {
+  return (
+    <>
+      <Input id={id} value={value} onChange={(e) => onChange(e.target.value)} list={list} placeholder="e.g. Confirm purchase decision" invalid={invalid} />
+      <datalist id={list}>{TASK_PURPOSES.map((p) => <option key={p} value={p} />)}</datalist>
+    </>
+  );
+}
+
+export function FilterBar({ value, onChange, fields = ['owner', 'segment', 'country', 'family'] }) {
+  const meta = useMeta();
+  const people = usePeople({ activeOnly: false });
+  return (
+    <div className="filter-bar">
+      {fields.includes('owner') && (
+        <Select aria-label="Owner" value={value.owner || ''} onChange={(e) => onChange({ owner: e.target.value })} placeholder="All owners"
+          options={people.filter((p) => ['admin', 'coordinator', 'sales', 'accounts'].includes(p.group)).map((p) => ({ value: String(p.id), label: p.name }))} />
+      )}
+      {fields.includes('segment') && <Select aria-label="Market" value={value.segment || ''} onChange={(e) => onChange({ segment: e.target.value })} placeholder="Domestic & export" options={SEGMENTS} />}
+      {fields.includes('country') && <Select aria-label="Country" value={value.country || ''} onChange={(e) => onChange({ country: e.target.value })} placeholder="All countries" options={COUNTRIES} />}
+      {fields.includes('family') && <Select aria-label="Product family" value={value.family || ''} onChange={(e) => onChange({ family: e.target.value })} placeholder="All product families" options={meta.families} />}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ status labels (always text + colour)
+export const StageBadge = ({ stage, size }) => <Badge tone={toneOf(ENQUIRY_STAGES, stage)} size={size}>{labelOf(ENQUIRY_STAGES, stage)}</Badge>;
+export const QuoteBadge = ({ status, size }) => (status ? <Badge tone={toneOf(QUOTE_STATUSES, status)} size={size}>{labelOf(QUOTE_STATUSES, status)}</Badge> : null);
+export const ApprovalBadge = ({ status, size }) => (status && status !== 'not_required' ? <Badge tone={toneOf(APPROVAL_STATUSES, status)} size={size} icon={status === 'approved' ? 'check' : 'shield'}>{labelOf(APPROVAL_STATUSES, status)}</Badge> : null);
+export const ReactivationBadge = ({ status }) => <Badge tone={toneOf(REACTIVATION_STATUSES, status)}>{labelOf(REACTIVATION_STATUSES, status)}</Badge>;
+
+export function LineStateBadge({ state, daysLate, size, pastAgreed }) {
+  const s = LINE_STATES.find((x) => x.value === state) || LINE_STATES[4];
+  const label = state === 'overdue' && daysLate ? `Overdue ${daysLate} day${daysLate === 1 ? '' : 's'}` : s.label;
+  return <Badge tone={s.tone} icon={s.icon} size={size} title={pastAgreed ? 'Also past the customer-agreed date' : undefined}>{label}{pastAgreed ? ' · past agreed date' : ''}</Badge>;
+}
+
+export function OutcomeBadges({ outcome = [], size }) {
+  return <span className="row wrap" style={{ gap: 4 }}>{outcome.map((o) => <Badge key={o} tone={toneOf(OUTCOMES, o)} size={size}>{labelOf(OUTCOMES, o)}</Badge>)}</span>;
+}
+
+export function CommBadge({ state, size }) {
+  if (!state || state === 'not_needed') return <span className="muted small">Not needed</span>;
+  return <Badge tone={toneOf(COMM_STATES, state)} icon={state === 'pending' ? 'alert' : 'check'} size={size}>{state === 'pending' ? 'No — not informed' : 'Yes — informed'}</Badge>;
+}
+
+export function PhaseLabel({ phase }) {
+  if (phase === 'mixed') return <Badge tone="violet" icon="layers">Mixed phases</Badge>;
+  if (phase === 'draft') return <Badge tone="slate">Draft</Badge>;
+  if (phase === 'closed') return <Badge tone="slate">Closed</Badge>;
+  return <span className="strong small">{labelOf(PHASES, phase)}</span>;
+}
+
+/** Due label in the business zone: Overdue / Today / Tomorrow / date. */
+export function DueBadge({ task, date: d, state }) {
+  const due = task?.due_date || d;
+  const st = task?.due_state || state;
+  if (!due) return <span className="muted">—</span>;
+  if (st === 'overdue') return <Badge tone="red" icon="clock">{relDay(due) === 'Today' ? `Overdue (${task?.due_time || 'today'})` : relDay(due)}</Badge>;
+  if (st === 'today') return <Badge tone="green">Today{task?.due_time ? ` ${task.due_time}` : ''}</Badge>;
+  const r = relDay(due);
+  return <Badge tone={r === 'Tomorrow' ? 'amber' : 'slate'}>{r}</Badge>;
+}
+
+export function HealthLabels({ labels = [] }) {
+  return <span className="row wrap" style={{ gap: 6 }}>{labels.map((l) => <Badge key={l.code} tone={l.tone}>{l.label}</Badge>)}</span>;
+}
+
+export function Money({ minor, currency }) {
+  const { user } = useAuth();
+  if (!user?.permissions.includes('values.view')) return <span className="muted small" title="Commercial values are hidden for your role">Hidden</span>;
+  if (minor === null || minor === undefined) return <span className="muted" title="Price not recorded — not zero">Unknown</span>;
+  return <span className="num">{money(minor, currency)}</span>;
+}
+
+export function JourneyStepper({ phase, workStatus, dispatched }) {
+  const steps = PHASES;
+  const current = dispatched ? 'dispatched' : phase;
+  const idx = steps.findIndex((s) => s.value === current);
+  return (
+    <div className="journey" aria-label={`Journey: ${labelOf(PHASES, current)}`}>
+      {steps.map((s, i) => {
+        const state = i < idx || (dispatched && i === idx) ? 'done' : i === idx ? 'current' : '';
+        return (
+          <div key={s.value} className={`step ${state} ${state === 'current' && workStatus === 'on_hold' ? 'hold' : ''}`}>
+            <span className="node">{state === 'done' && <Icon name="check" size={14} strokeWidth={3} />}</span>
+            <span>{s.label}{state === 'current' && workStatus === 'on_hold' ? ' (on hold)' : ''}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ customer picker with duplicate warnings
+/**
+ * Search first; quick-create a company with at least one contact method (phone OR email). Before creating,
+ * possible existing matches are shown — choosing one avoids a duplicate; nothing merges automatically.
+ */
+export function CustomerPicker({ value, onChange, allowCreate = true, invalid, id, newCustomer, onNewCustomer }) {
+  const [creating, setCreating] = useState(Boolean(newCustomer));
+  const [matches, setMatches] = useState([]);
+  const load = useCallback(async (q) => {
+    if (q.trim().length < 2) return [];
+    const res = await api.get('/customers', { q, pageSize: 12 });
+    return res.rows.map((c) => ({ value: c.id, label: c.company_name, sub: [c.code, c.city, c.country_code, c.primary_contact].filter(Boolean).join(' · '), row: c }));
   }, []);
+  const nc = newCustomer || { company_name: '', country_code: 'IN', city: '', contact_name: '', phone: '', email: '', provisional: false };
+  const setNc = (patch) => onNewCustomer({ ...nc, ...patch });
+  const timer = useRef(null);
+  useEffect(() => {
+    if (!creating) return undefined;
+    clearTimeout(timer.current);
+    if ((nc.company_name || '').length < 3 && !nc.phone && !nc.email) {
+      setMatches([]);
+      return undefined;
+    }
+    timer.current = setTimeout(() => {
+      api.get('/customers/match', { name: nc.company_name, phone: nc.phone, email: nc.email, country: nc.country_code }).then(setMatches).catch(() => {});
+    }, 350);
+    return () => clearTimeout(timer.current);
+  }, [creating, nc.company_name, nc.phone, nc.email, nc.country_code]);
 
-  if (selected && !open) {
+  if (creating) {
     return (
-      <div className="row input" style={{ justifyContent: 'space-between' }}>
-        <span className="truncate">{selected.name}{selected.city ? <span className="muted"> · {selected.city}</span> : ''}</span>
-        <button type="button" className="btn ghost xs" onClick={() => { onChange(null, null); setSelected(null); setOpen(true); }}>Change</button>
+      <div className="stack-sm">
+        <div className="form-grid">
+          <Field label="Company name" required className="full"><Input value={nc.company_name} onChange={(e) => setNc({ company_name: e.target.value })} placeholder="Registered or trading name" /></Field>
+          <Field label="Country"><CountrySelect value={nc.country_code} onChange={(v) => setNc({ country_code: v })} /></Field>
+          <Field label="City" optional><Input value={nc.city} onChange={(e) => setNc({ city: e.target.value })} /></Field>
+          <Field label="Contact name" optional><Input value={nc.contact_name} onChange={(e) => setNc({ contact_name: e.target.value })} /></Field>
+          <Field label="Phone" hint="Phone or email is needed"><Input value={nc.phone} onChange={(e) => setNc({ phone: e.target.value })} inputMode="tel" /></Field>
+          <Field label="Email" className="full"><Input value={nc.email} onChange={(e) => setNc({ email: e.target.value })} type="email" /></Field>
+          <div className="full"><Checkbox label="Provisional record (company details still to be confirmed)" checked={nc.provisional} onChange={(v) => setNc({ provisional: v })} /></div>
+        </div>
+        {matches.length > 0 && (
+          <div className="match-card" role="alert">
+            <div className="strong small">Possible existing customer — use it instead of creating a duplicate?</div>
+            {matches.slice(0, 3).map((m) => (
+              <div key={m.id} className="row between mt-8" style={{ gap: 8 }}>
+                <span className="small"><strong>{m.company_name}</strong> {m.city ? `· ${m.city}` : ''} — {m.reasons.join('; ')}</span>
+                <Button size="xs" onClick={() => { setCreating(false); onNewCustomer(null); onChange({ id: m.id, company_name: m.company_name }); }}>Use this</Button>
+              </div>
+            ))}
+            <div className="small mt-8">Different company? Continue — you will be asked to confirm it is separate.</div>
+          </div>
+        )}
+        <Button size="sm" variant="link" onClick={() => { setCreating(false); onNewCustomer(null); }}>Search existing customers instead</Button>
       </div>
     );
   }
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <input className="input" value={text} placeholder={placeholder} onFocus={() => setOpen(true)} onChange={(e) => { setText(e.target.value); setOpen(true); }} />
-      {open && (
-        <div className="search-results" style={{ top: 38 }}>
-          {results.map((c) => (
-            <a key={c.id} href="#" onClick={(e) => { e.preventDefault(); setSelected(c); setOpen(false); onChange(c.id, c); }}>
-              <span className="grow truncate">{c.name}</span>
-              <span className="muted small">{c.city}</span>
-            </a>
-          ))}
-          {!results.length && <div className="muted small" style={{ padding: 10 }}>No matching customers</div>}
-          {allowCreate && text.trim().length > 2 && (
-            <a href="#" onClick={(e) => { e.preventDefault(); setOpen(false); onCreate(text.trim()); }}>
-              <Icon name="plus" size={14} /> Add “{text.trim()}” as a new company
-            </a>
-          )}
-        </div>
-      )}
+    <div className="stack-xs">
+      <Combobox id={id} value={value?.id} label={value?.company_name || ''} load={load} onChange={(o) => onChange({ id: o.value, company_name: o.label, row: o.row })}
+        placeholder="Search company, phone, email, order or PO…" invalid={invalid} minChars={2}
+        renderEmpty={(q, close) => (allowCreate && q.length >= 2 ? (
+          <div className="combo-opt" onMouseDown={(e) => { e.preventDefault(); close(); setCreating(true); onNewCustomer({ ...nc, company_name: q }); onChange(null); }}>
+            <span><Icon name="plus" size={13} /> Add new company “{q}”</span>
+            <span className="s">Quick-create with a phone or email</span>
+          </div>
+        ) : <div className="combo-opt"><span className="s">No matches</span></div>)}
+      />
+      {allowCreate && <Button size="sm" variant="link" onClick={() => { setCreating(true); onNewCustomer({ ...nc }); onChange(null); }}>+ New company</Button>}
     </div>
   );
 }
 
-// ------------------------------------------------------------------ attachments & voice notes
-export function VoiceRecorder({ onRecorded }) {
-  const [state, setState] = useState('idle');
-  const [seconds, setSeconds] = useState(0);
-  const recorder = useRef(null);
-  const timer = useRef(null);
-  const toast = useToast();
+// ------------------------------------------------------------------ timeline
+const GROUP_ICON = { calls: 'phone', emails: 'mail', quotations: 'quotation', orders: 'box', complaints: 'complaint', internal: 'note', enquiries: 'inbox', payments: 'payment' };
+export const TIMELINE_FILTERS = [
+  { value: 'all', label: 'All' }, { value: 'calls', label: 'Calls & messages' }, { value: 'emails', label: 'Emails' }, { value: 'quotations', label: 'Quotations' },
+  { value: 'enquiries', label: 'Enquiries' }, { value: 'orders', label: 'Order events' }, { value: 'complaints', label: 'Complaints' }, { value: 'internal', label: 'Internal notes' },
+];
 
-  const start = async () => {
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-      toast.error('Voice recording is not supported in this browser');
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const chunks = [];
-      const rec = new MediaRecorder(stream);
-      rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-      rec.onstop = () => {
-        stream.getTracks().forEach((t) => t.stop());
-        const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
-        onRecorded(blob);
-        setState('idle');
-      };
-      rec.start();
-      recorder.current = rec;
-      setSeconds(0);
-      timer.current = setInterval(() => setSeconds((s) => s + 1), 1000);
-      setState('recording');
-    } catch {
-      toast.error('Microphone permission was denied');
-    }
-  };
-  const stop = () => {
-    clearInterval(timer.current);
-    recorder.current?.stop();
-  };
-  useEffect(() => () => clearInterval(timer.current), []);
-
-  return state === 'recording'
-    ? <Button size="sm" variant="danger" icon="stop" onClick={stop}>Stop · {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, '0')}</Button>
-    : <Button size="sm" icon="mic" onClick={start}>Voice note</Button>;
-}
-
-/** Collect uploads before the parent record exists; returns attachment ids via onChange. */
-export function PendingAttachments({ value = [], onChange, kind = 'file', voice = true, accept }) {
-  const toast = useToast();
-  const [busy, setBusy] = useState(false);
-  const inputRef = useRef(null);
-  const add = async (file, k = kind, name) => {
-    setBusy(true);
-    try {
-      const a = await uploadFile(file, { kind: k, name });
-      onChange([...value, a]);
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setBusy(false);
-    }
-  };
+export function Timeline({ items = [], compact }) {
+  if (!items.length) return <div className="muted small">Nothing recorded yet.</div>;
   return (
-    <div className="stack-sm">
-      <div className="row wrap">
-        <Button size="sm" icon="paperclip" loading={busy} onClick={() => inputRef.current?.click()}>Attach files</Button>
-        {voice && <VoiceRecorder onRecorded={(blob) => add(blob, 'voice_note', `voice-note-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '')}.webm`)} />}
-        <input ref={inputRef} type="file" multiple hidden accept={accept} onChange={async (e) => { for (const f of e.target.files) await add(f); e.target.value = ''; }} />
-      </div>
-      {value.length > 0 && (
-        <div className="chips">
-          {value.map((a) => (
-            <span key={a.id} className="tag">
-              <Icon name={a.kind === 'voice_note' ? 'mic' : 'file'} size={12} /> &nbsp;{a.original_name} <span className="muted">&nbsp;{fileSize(a.size)}</span>
-              <button type="button" className="btn ghost xs" onClick={() => onChange(value.filter((x) => x.id !== a.id))} aria-label="Remove">×</button>
-            </span>
-          ))}
+    <div className="timeline">
+      {items.map((i) => (
+        <div key={i.key || i.id} className="tl-item">
+          <span className={`tl-icon ${i.group || ''}`}><Icon name={CHANNEL_ICON[i.icon] || GROUP_ICON[i.group] || 'file'} size={12} /></span>
+          <div className="tl-head">
+            <span className="tl-title">{i.link ? <Link to={i.link}>{i.title}</Link> : i.title}</span>
+          </div>
+          <div className="tl-meta">
+            {dateTime(i.at)}
+            {i.actor && ` · entered by ${i.actor}`}
+            {i.reported_by && i.reported_by !== i.actor && ` · reported by ${i.reported_by}`}
+            {i.contact && ` · with ${i.contact}`}
+            {i.backdated && <Badge size="sm" tone="amber"> Back-entered {dateTime(i.entered_at)}</Badge>}
+            {i.historical && <Badge size="sm" tone="slate">Historical entry</Badge>}
+            {i.customer_contact === false && <Badge size="sm" tone="slate">Internal — not customer contact</Badge>}
+          </div>
+          {!compact && i.detail && <div className="tl-body">{i.detail}</div>}
         </div>
-      )}
-    </div>
-  );
-}
-
-export function AttachmentList({ items }) {
-  if (!items?.length) return null;
-  return (
-    <div className="stack-sm" style={{ marginTop: 6 }}>
-      {items.map((a) => (
-        a.mime?.startsWith('audio/')
-          ? <div key={a.id} className="row"><Icon name="mic" size={14} /><audio controls src={fileUrl(a.id)} style={{ height: 32, maxWidth: 280 }} /></div>
-          : a.mime?.startsWith('image/')
-            ? <a key={a.id} href={fileUrl(a.id)} target="_blank" rel="noreferrer"><img src={fileUrl(a.id)} alt={a.original_name} style={{ maxWidth: 160, maxHeight: 110, borderRadius: 6, border: '1px solid var(--border)' }} /></a>
-            : <a key={a.id} href={fileUrl(a.id)} target="_blank" rel="noreferrer" className="row small"><Icon name="file" size={14} />{a.original_name} <span className="muted">{fileSize(a.size)}</span></a>
       ))}
     </div>
   );
 }
 
-export function EntityAttachments({ entity, entityId, kind = 'file', canUpload = true, title = 'Attachments' }) {
-  const { data, reload } = useApi(`/attachments`, { entity, entity_id: entityId });
+// ------------------------------------------------------------------ documents
+export function Attachments({ items = [], entityType, entityId, onChange, canUpload = true }) {
   const toast = useToast();
-  const inputRef = useRef(null);
+  const { can } = useAuth();
   const [busy, setBusy] = useState(false);
-  const upload = async (files) => {
+  const inputRef = useRef(null);
+  const onFiles = async (files) => {
     setBusy(true);
     try {
-      for (const f of files) await uploadFile(f, { entity, entity_id: entityId, kind });
-      toast.success('Uploaded');
-      reload();
+      for (const f of files) {
+        const r = await uploadFile(f, { entity_type: entityType, entity_id: entityId });
+        toast.success(r.reused ? `${f.name}: identical file already stored — linked by reference` : `${f.name} uploaded`);
+      }
+      onChange?.();
     } catch (err) {
       toast.error(err.message);
     } finally {
@@ -205,198 +312,69 @@ export function EntityAttachments({ entity, entityId, kind = 'file', canUpload =
   };
   return (
     <div className="stack-sm">
-      <div className="row between">
-        <h3>{title}</h3>
-        {canUpload && <Button size="sm" icon="paperclip" loading={busy} onClick={() => inputRef.current?.click()}>Upload</Button>}
-        <input ref={inputRef} type="file" multiple hidden onChange={(e) => { upload([...e.target.files]); e.target.value = ''; }} />
-      </div>
-      {data?.length ? <AttachmentList items={data} /> : <div className="muted small">No files yet</div>}
-    </div>
-  );
-}
-
-// ------------------------------------------------------------------ log activity
-const ACTIVITY_ICONS = { call: 'phone', whatsapp: 'whatsapp', email: 'mail', meeting: 'meeting', video: 'video', factory_visit: 'factory', sample_delivery: 'box', requirement: 'file', note: 'note' };
-
-/**
- * Log an interaction. For open leads the next action and follow-up date are mandatory
- * (enforced by the API too), keeping every lead moving.
- */
-export function LogActivityModal({ open, onClose, onSaved, customerId, leadId, quotationId, orderId, complaintId, followup, requireNext, defaultType = 'call' }) {
-  const toast = useToast();
-  const { data: customer } = useApi(open && customerId ? `/customers/${customerId}` : null);
-  const [form, setForm] = useState({});
-  const [files, setFiles] = useState([]);
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (open) {
-      setForm({ type: defaultType, follow_up_date: requireNext ? addDaysStr(todayStr(), 3) : '', next_action: followup?.title && requireNext ? '' : '' });
-      setFiles([]);
-    }
-  }, [open, defaultType, requireNext, followup]);
-
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e?.target ? e.target.value : e }));
-  const save = async () => {
-    setBusy(true);
-    try {
-      await api.post('/activities', {
-        ...form, customer_id: customerId, lead_id: leadId, quotation_id: quotationId, order_id: orderId, complaint_id: complaintId,
-        complete_followup_id: followup?.id, attachment_ids: files.map((f) => f.id),
-      });
-      toast.success(followup ? 'Logged and follow-up completed' : 'Interaction logged');
-      onSaved?.();
-      onClose();
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal open={open} onClose={onClose} size="lg" title="Log interaction" subtitle={followup ? `Completing: ${followup.title}` : customer?.name}
-      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} onClick={save}>Save</Button></>}>
-      <div className="stack">
-        <Chips options={ACTIVITY_TYPES.map((t) => ({ value: t.value, label: t.label }))} value={form.type} onChange={(v) => setForm((f) => ({ ...f, type: v || f.type }))} />
-        <div className="form-grid">
-          <Field label="Contact person">
-            <Select value={form.contact_id} onChange={set('contact_id')} placeholder="—" options={(customer?.contacts || []).map((c) => ({ value: c.id, label: `${c.name}${c.designation ? ` (${c.designation})` : ''}` }))} />
-          </Field>
-          <Field label="When">
-            <Input type="datetime-local" value={form.activity_date} onChange={set('activity_date')} max={new Date().toISOString().slice(0, 16)} />
-          </Field>
-          <Field label="Discussion summary" required className="full">
-            <Textarea rows={3} value={form.summary} onChange={set('summary')} placeholder="What was discussed?" />
-          </Field>
-          <Field label="Customer's response">
-            <Textarea rows={2} value={form.customer_response} onChange={set('customer_response')} />
-          </Field>
-          <Field label="Objections raised">
-            <Textarea rows={2} value={form.objections} onChange={set('objections')} placeholder="Price, delivery, specs…" />
-          </Field>
-          <Field label="Products discussed" className="full">
-            <Input value={form.products_discussed} onChange={set('products_discussed')} placeholder="e.g. EM300 meters, GW10 gateway" />
-          </Field>
-          <Field label="Next action" required={requireNext}>
-            <Input value={form.next_action} onChange={set('next_action')} placeholder="e.g. Send revised quotation" />
-          </Field>
-          <Field label="Follow-up date" required={requireNext} hint={form.follow_up_date ? relativeDay(form.follow_up_date) : 'Creates a reminder'}>
-            <Input type="date" value={form.follow_up_date} onChange={set('follow_up_date')} min={todayStr()} />
-          </Field>
-          <Field label="Attachments & voice notes" className="full">
-            <PendingAttachments value={files} onChange={setFiles} />
-          </Field>
+      {!items.length && <div className="muted small">No documents yet.</div>}
+      {items.map((a) => (
+        <div key={`${a.id}-${a.entity_type || ''}`} className="row between" style={{ gap: 8 }}>
+          <button type="button" className="btn link" onClick={() => openFile(a.id).catch((e) => toast.error(e.message))}>
+            <Icon name="paperclip" size={14} /> {a.original_name}
+          </button>
+          <span className="muted small nowrap">{fileSize(a.size)} · {date(a.uploaded_at)}{a.via ? ` · via ${a.via}` : ''}</span>
         </div>
-      </div>
-    </Modal>
-  );
-}
-
-// ------------------------------------------------------------------ timeline
-const KIND_ICON = { communication: 'phone', lead: 'leads', quotation: 'quotations', order: 'orders', production: 'production', dispatch: 'truck', payment: 'rupee', complaint: 'complaints', sample: 'box', requirement: 'file' };
-const KINDS = [
-  { value: '', label: 'Everything' },
-  { value: 'communication', label: 'Calls, meetings & messages' },
-  { value: 'requirement', label: 'Requirements & samples' },
-  { value: 'lead', label: 'Leads' },
-  { value: 'quotation', label: 'Quotations' },
-  { value: 'order', label: 'Orders' },
-  { value: 'production', label: 'Production' },
-  { value: 'dispatch', label: 'Dispatch' },
-  { value: 'payment', label: 'Payments' },
-  { value: 'complaint', label: 'Service' },
-];
-
-export function Timeline({ items, loading, filterable = true, limit }) {
-  const [kind, setKind] = useState('');
-  const [showAll, setShowAll] = useState(false);
-  if (loading && !items) return <Spinner />;
-  const filtered = (items || []).filter((i) => !kind || i.kind === kind || (kind === 'requirement' && i.kind === 'sample'));
-  const visible = limit && !showAll ? filtered.slice(0, limit) : filtered;
-  const counts = Object.fromEntries(KINDS.map((k) => [k.value, k.value ? (items || []).filter((i) => i.kind === k.value || (k.value === 'requirement' && i.kind === 'sample')).length : (items || []).length]));
-  return (
-    <div className="stack">
-      {filterable && <Chips options={KINDS.filter((k) => !k.value || counts[k.value])} value={kind} onChange={setKind} counts={counts} />}
-      {!filtered.length ? <EmptyState icon="clock" title="No activity yet" message="Interactions, quotations, orders and payments appear here in order." /> : (
-        <div className="timeline">
-          {visible.map((i) => (
-            <div key={i.key} className="tl-item">
-              <span className={`tl-icon ${i.kind}`}><Icon name={i.kind === 'communication' ? ACTIVITY_ICONS[i.type] || 'phone' : KIND_ICON[i.kind]} size={12} strokeWidth={2.2} /></span>
-              <div className="tl-head">
-                <span className="tl-title">{i.title}</span>
-                {i.amount !== undefined && i.amount !== null && <Badge size="sm" color="slate">{inrCompact(i.amount)}</Badge>}
-                {i.refs?.map((r) => <Link key={r.link} to={r.link} className="small">{r.label}</Link>)}
-              </div>
-              <div className="tl-meta">{dateTime(i.at)}{i.user ? ` · ${i.user}` : ''}</div>
-              {i.detail && <div className="tl-body">{i.detail}</div>}
-              {(i.customer_response || i.objections || i.next_action || i.products_discussed) && (
-                <dl className="tl-detail">
-                  {i.customer_response && <><dt>Response</dt><dd>{i.customer_response}</dd></>}
-                  {i.objections && <><dt>Objections</dt><dd>{i.objections}</dd></>}
-                  {i.products_discussed && <><dt>Products</dt><dd>{i.products_discussed}</dd></>}
-                  {i.next_action && <><dt>Next action</dt><dd>{i.next_action}{i.follow_up_date ? ` · ${date(i.follow_up_date)}` : ''}</dd></>}
-                </dl>
-              )}
-              <AttachmentList items={i.attachments} />
-            </div>
-          ))}
-        </div>
+      ))}
+      {canUpload && can('attachments.upload') && entityType && (
+        <>
+          <input ref={inputRef} type="file" hidden multiple onChange={(e) => { onFiles([...e.target.files]); e.target.value = ''; }}
+            accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt,.eml,.msg,.pptx" />
+          <div><Button size="sm" icon="upload" loading={busy} onClick={() => inputRef.current?.click()}>Attach document</Button> <span className="muted tiny">PDF, images, Office, CSV, email — max 20 MB</span></div>
+        </>
       )}
-      {limit && filtered.length > limit && !showAll && <Button size="sm" onClick={() => setShowAll(true)}>Show all {filtered.length}</Button>}
     </div>
   );
 }
 
-// ------------------------------------------------------------------ contacts quick actions
-export function ContactActions({ phone, whatsapp, email, size = 'xs' }) {
-  const wa = (whatsapp || phone || '').replace(/[^\d]/g, '');
+/** Uploads a single file and returns its id (used inside forms before the record exists). */
+export function FilePick({ value, onChange, label = 'Attach document', entityType, entityId }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const ref = useRef(null);
   return (
-    <span className="row" style={{ gap: 2 }}>
-      {phone && <a className={`btn ghost ${size} icon`} href={`tel:${phone.replace(/\s/g, '')}`} title={`Call ${phone}`}><Icon name="phone" size={13} /></a>}
-      {wa && <a className={`btn ghost ${size} icon`} href={`https://wa.me/${wa}`} target="_blank" rel="noreferrer" title="WhatsApp"><Icon name="whatsapp" size={13} /></a>}
-      {email && <a className={`btn ghost ${size} icon`} href={`mailto:${email}`} title={email}><Icon name="mail" size={13} /></a>}
+    <span className="row wrap">
+      <input ref={ref} type="file" hidden onChange={async (e) => {
+        const f = e.target.files[0];
+        e.target.value = '';
+        if (!f) return;
+        setBusy(true);
+        try {
+          const r = await uploadFile(f, { entity_type: entityType, entity_id: entityId });
+          onChange({ id: r.id, name: r.original_name });
+        } catch (err) {
+          toast.error(err.message);
+        } finally {
+          setBusy(false);
+        }
+      }} />
+      <Button size="sm" icon="paperclip" loading={busy} onClick={() => ref.current?.click()}>{value ? 'Replace' : label}</Button>
+      {value && <span className="small"><Icon name="file" size={13} /> {value.name} <button type="button" className="btn link" onClick={() => onChange(null)}>Remove</button></span>}
     </span>
   );
 }
 
-export function ContactForm({ open, onClose, onSaved, customerId, contact }) {
+export function PinButton({ type, id, pinned, onChange }) {
+  const { can } = useAuth();
   const toast = useToast();
-  const [form, setForm] = useState({});
-  const [busy, setBusy] = useState(false);
-  useEffect(() => { if (open) setForm(contact || { contact_role: 'purchase', preferred_channel: 'phone' }); }, [open, contact]);
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e?.target ? (e.target.type === 'checkbox' ? e.target.checked : e.target.value) : e }));
-  const save = async () => {
-    setBusy(true);
-    try {
-      if (contact?.id) await api.put(`/contacts/${contact.id}`, form);
-      else await api.post(`/customers/${customerId}/contacts`, form);
-      toast.success('Contact saved');
-      onSaved?.();
-      onClose();
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setBusy(false);
-    }
-  };
+  if (!can('pins.manage')) return null;
   return (
-    <Modal open={open} onClose={onClose} title={contact?.id ? 'Edit contact' : 'Add contact'} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} onClick={save}>Save</Button></>}>
-      <div className="form-grid">
-        <Field label="Name" required><Input value={form.name} onChange={set('name')} autoFocus /></Field>
-        <Field label="Role"><Select value={form.contact_role} onChange={set('contact_role')} options={CONTACT_ROLES} /></Field>
-        <Field label="Designation"><Input value={form.designation} onChange={set('designation')} /></Field>
-        <Field label="Preferred channel"><Select value={form.preferred_channel} onChange={set('preferred_channel')} options={[{ value: 'phone', label: 'Phone' }, { value: 'whatsapp', label: 'WhatsApp' }, { value: 'email', label: 'Email' }, { value: 'meeting', label: 'In person' }]} /></Field>
-        <Field label="Phone"><Input value={form.phone} onChange={set('phone')} placeholder="+91 98…" /></Field>
-        <Field label="WhatsApp"><Input value={form.whatsapp} onChange={set('whatsapp')} placeholder="Same as phone if blank" /></Field>
-        <Field label="Email" className="full"><Input type="email" value={form.email} onChange={set('email')} /></Field>
-        <label className="check full"><input type="checkbox" checked={Boolean(form.is_primary)} onChange={set('is_primary')} /> Primary contact</label>
-      </div>
-    </Modal>
+    <Button size="sm" icon="pin" variant={pinned ? 'primary' : undefined} onClick={async () => {
+      try {
+        await api.post('/pins', { entity_type: type, entity_id: id, pinned: !pinned });
+        onChange?.();
+      } catch (err) {
+        toast.error(err.message);
+      }
+    }}>{pinned ? 'Pinned' : 'Pin to overview'}</Button>
   );
 }
 
-export function useCan() {
-  const { can } = useAuth();
-  return can;
+export function roleLabel(role) {
+  return labelOf(ROLES, role);
 }

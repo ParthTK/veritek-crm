@@ -1,4 +1,5 @@
-// Seeds a throwaway database, starts the API on a spare port and runs the journey test against it.
+// Seeds a throwaway database, starts the API on a spare port and runs the acceptance journey and the
+// Objects & QR suite against it. The real database is never touched.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -44,6 +45,7 @@ let code = 1;
 try {
   await waitForServer('http://localhost:4399/api/auth/me');
   await run(['tests/journey.mjs'], { quiet: false });
+  await run(['tests/objects.mjs'], { quiet: false });
   code = 0;
 } catch (err) {
   console.error(`\n${err.message}`);

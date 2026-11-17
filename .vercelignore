@@ -3,3 +3,5 @@ client/dist
 data
 tests
 *.log
+seed/uploads
+docs

@@ -1,508 +1,452 @@
+// One quotation: the customer-facing document for any revision, internal pricing checks (margin, approval),
+// the approval trail, issue evidence, outcome, conversion to an order, revision comparison and history.
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { QUOTATION_STATUSES, QUOTE_AWAITING, PRIORITIES, ROLES, LOSS_REASONS, WIN_REASONS, COMPETITORS, labelOf } from '@shared/constants.js';
-import { api } from '../api.js';
+import { ROLES, PRICE_LISTS, QUOTE_STATUSES, labelOf } from '@shared/constants.js';
+import { api, openFile } from '../api.js';
 import { useAuth } from '../auth.jsx';
-import { useApi } from '../lib/hooks.js';
-import { inr, inrCompact, number, pct, date, dateTime, relativeDay, daysFromToday, todayStr, addDaysStr } from '../lib/format.js';
-import { Badge, Button, Card, Checkbox, ErrorState, Field, Input, KV, Modal, OptionBadge, PageHeader, Select, Spinner, Tabs, Textarea, useToast } from '../components/ui.jsx';
-import { PendingAttachments, useMeta, LogActivityModal } from '../components/domain.jsx';
+import { useApi, useSave } from '../lib/hooks.js';
+import { date, dateTime, number, pct, qty as fmtQty, money } from '../lib/format.js';
+import {
+  Badge, Button, Card, ErrorState, Facts, Field, Modal, Notice, PageHeader, SaveStatus, Select, Spinner, Tabs, Textarea, useConfirm, useToast, EmptyState,
+} from '../components/ui.jsx';
+import { ApprovalBadge, Money, QuoteBadge, StageBadge, useMeta } from '../components/domain.jsx';
+import Icon from '../components/Icon.jsx';
+import { ConvertForm, IssueForm, OutcomeForm } from './EnquiryDetail.jsx';
+
+const HISTORY = {
+  approval_requested: 'Sent for internal approval', approved: 'Approved', approval_rejected: 'Approval rejected', accepted: 'Customer accepted', rejected: 'Customer rejected',
+  viewed: 'Customer opened the link', revision_requested: 'Customer asked for a revision',
+};
 
 export default function QuotationDetail() {
   const { id } = useParams();
-  const navigate = useNavigate();
-  const toast = useToast();
+  const { can } = useAuth();
   const meta = useMeta();
-  const { can, user } = useAuth();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const navigate = useNavigate();
   const { data: q, error, reload } = useApi(`/quotations/${id}`);
-  const [versionNo, setVersionNo] = useState(null);
+  const [tab, setTab] = useState('document');
+  const [revNo, setRevNo] = useState(null);
   const [modal, setModal] = useState(null);
-  const [compareWith, setCompareWith] = useState(null);
-
+  const [busy, setBusy] = useState(false);
   if (error) return <ErrorState error={error} onRetry={reload} />;
   if (!q) return <Spinner />;
-  const version = q.versions.find((v) => v.version_no === (versionNo ?? q.current_version)) || q.current;
-  const isCurrent = version.version_no === q.current_version;
-  const editable = can('quotations.edit');
-  const marginVisible = can('margin.view');
-  const pendingApproval = q.approvals.find((a) => a.status === 'pending');
-  const portalUrl = `${window.location.origin}/portal/quote/${q.public_token}`;
-  const awaiting = QUOTE_AWAITING.includes(q.status);
+  const cur = q.current;
+  const shown = q.revisions.find((r) => r.revision_no === revNo) || cur;
+  const edit = can('quotes.edit');
+  const requireBeforeIssue = meta.settings.approvals?.requireBeforeIssue;
+  const blockedIssue = cur.status === 'draft' && cur.approval_role && requireBeforeIssue && cur.approval_status !== 'approved';
+  const issuedRev = q.revisions.find((r) => ['issued', 'accepted', 'rejected'].includes(r.status));
+  const portalUrl = issuedRev ? `${window.location.origin}/portal/quote/${q.public_token}` : null;
+  const convertible = q.revisions.find((r) => ['issued', 'accepted'].includes(r.status) && r.conversion?.some((l) => l.remaining_qty === null || l.remaining_qty > 0));
+  const enquiry = { id: q.enquiry_id, owner_id: q.owner_id, customer_name: q.customer_name, contact_name: q.contact_name };
 
+  const done = (msg) => {
+    toast.success(msg);
+    setModal(null);
+    reload();
+    window.dispatchEvent(new Event('data:changed'));
+  };
   const act = async (fn, msg) => {
+    setBusy(true);
     try {
       await fn();
-      if (msg) toast.success(msg);
-      reload();
-      setModal(null);
-    } catch (err) {
-      toast.error(err.message);
+      done(msg);
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setBusy(false);
     }
   };
 
   return (
     <div className="stack">
-      <PageHeader
-        crumbs={[{ label: 'Quotations', to: '/quotations' }, { label: q.number }]}
-        title={<span className="row wrap" style={{ gap: 10 }}>{q.number}<OptionBadge list={QUOTATION_STATUSES} value={q.status} />{q.order_number && <Link className="small" to={`/orders/${q.order_id}`}>→ {q.order_number}</Link>}</span>}
-        subtitle={<span className="row wrap" style={{ gap: 8 }}>
-          <Link to={`/customers/${q.customer_id}`}>{q.customer_name}</Link>
-          {q.lead_code && <Link className="small" to={`/leads/${q.lead_id}`}>{q.lead_code}</Link>}
-          <span className="muted small">{q.subject}</span>
-          {q.valid_until && <span className={`small ${awaiting && daysFromToday(q.valid_until) <= 3 ? 'warning-text strong' : 'muted'}`}>Valid until {date(q.valid_until)}{awaiting ? ` (${relativeDay(q.valid_until)})` : ''}</span>}
-        </span>}
-        actions={(
-          <>
-            <Button icon="printer" onClick={() => window.print()} className="no-print">Print</Button>
-            {q.public_token && <Button icon="link" onClick={() => { navigator.clipboard?.writeText(portalUrl); toast.success('Customer link copied'); }}>Copy link</Button>}
-            {editable && q.status === 'draft' && <><Button icon="edit" to={`/quotations/${q.id}/edit`}>Edit</Button><Button variant="primary" icon="send" onClick={() => act(() => api.post(`/quotations/${q.id}/submit`), 'Submitted')}>Submit for approval</Button></>}
-            {editable && q.status === 'approval_pending' && <Button onClick={() => act(() => api.post(`/quotations/${q.id}/withdraw`), 'Withdrawn to draft')}>Withdraw</Button>}
-            {q.can_decide && pendingApproval && <><Button variant="danger-ghost" onClick={() => setModal({ decide: 'rejected' })}>Reject</Button><Button variant="primary" icon="check" onClick={() => setModal({ decide: 'approved' })}>Approve</Button></>}
-            {editable && q.status === 'approved' && <Button variant="primary" icon="send" onClick={() => setModal({ send: true })}>Send to customer</Button>}
-            {editable && awaiting && (
-              <>
-                <Button icon="edit" to={`/quotations/${q.id}/edit`}>Revise</Button>
-                <Button icon="send" onClick={() => setModal({ send: true })}>Re-send</Button>
-                <Button onClick={() => setModal({ respond: true })}>Record response</Button>
-              </>
-            )}
-            {editable && ['rejected', 'expired'].includes(q.status) && <Button icon="refresh" to={`/quotations/${q.id}/edit`}>Revise &amp; reopen</Button>}
-            {can('orders.edit') && ['accepted', ...QUOTE_AWAITING].includes(q.status) && <Button variant="primary" icon="orders" onClick={() => setModal({ convert: true })}>Convert to order</Button>}
-            {editable && <Button icon="copy" onClick={async () => { const r = await api.post('/quotations/duplicate', { quotation_id: q.id }).catch((e) => toast.error(e.message)); if (r) navigate(`/quotations/${r.id}/edit`); }}>Duplicate</Button>}
-          </>
-        )}
-      />
+      <div className="no-print">
+        <PageHeader crumbs={[{ label: 'Quotations', to: '/quotations' }, { label: q.number }]}
+          eyebrow={<>{q.number} · revision {cur.revision_no} <QuoteBadge status={cur.status} size="sm" /> {cur.status === 'draft' && <ApprovalBadge status={cur.approval_status} size="sm" />} {cur.expired && <Badge size="sm" tone="amber">Validity expired</Badge>}</>}
+          title={<><Link to={`/customers/${q.customer_id}`}>{q.customer_name}</Link>{q.subject ? ` — ${q.subject}` : ''}</>}
+          subtitle={<>Owner {q.owner_name || '—'} · {labelOf(PRICE_LISTS, cur.price_list || q.price_list)} · {cur.currency}{q.enquiry_id && <> · enquiry <Link to={`/enquiries/${q.enquiry_id}`}>{q.enquiry_code}</Link> <StageBadge stage={q.enquiry_stage} size="sm" /></>}</>}
+          actions={<>
+            <Button icon="printer" onClick={() => { setTab('document'); setTimeout(() => window.print(), 50); }}>Print / PDF</Button>
+            {portalUrl && <Button icon="link" onClick={async () => { try { await navigator.clipboard.writeText(portalUrl); toast.success('Customer link copied — the customer sees the latest issued revision only'); } catch { window.prompt('Copy the customer link', portalUrl); } }}>Copy customer link</Button>}
+            {edit && <Button icon="copy" loading={busy} onClick={async () => {
+              if (!(await confirm({ title: 'Duplicate quotation?', message: 'A new draft quotation (with its own enquiry) is created for the same customer, with catalogue items re-priced at today’s price list.', confirmLabel: 'Duplicate' }))) return;
+              setBusy(true);
+              try {
+                const r = await api.post('/quotations/duplicate', { quotation_id: q.id });
+                toast.success('Duplicate created');
+                navigate(`/quotations/${r.quotation_id}/edit`);
+              } catch (e) {
+                toast.error(e.message);
+              } finally {
+                setBusy(false);
+              }
+            }}>Duplicate</Button>}
+          </>} />
+        <NextStep q={q} cur={cur} edit={edit} can={can} busy={busy} blockedIssue={blockedIssue} convertible={convertible} setModal={setModal} act={act} />
+      </div>
 
-      {pendingApproval && (
-        <div className="warn-box">
-          <div className="row between wrap">
-            <span><strong>Awaiting {labelOf(ROLES, pendingApproval.required_role)} approval</strong> — requested by {pendingApproval.requested_by_name} on {date(pendingApproval.requested_at)}: {pendingApproval.reasons.join('; ')}</span>
-            {q.can_decide && <span className="row"><Button size="sm" onClick={() => setModal({ decide: 'rejected' })}>Reject</Button><Button size="sm" variant="primary" onClick={() => setModal({ decide: 'approved' })}>Approve</Button></span>}
+      <div className="no-print">
+        <Tabs value={tab} onChange={setTab} tabs={[
+          { key: 'document', label: 'Quotation' },
+          { key: 'revisions', label: 'Revisions', count: q.revisions.length },
+          { key: 'approvals', label: 'Approvals', count: q.approvals.length || null },
+          { key: 'orders', label: 'Orders & conversion', count: q.orders.length || null },
+          { key: 'history', label: 'History' },
+        ]} />
+      </div>
+
+      {tab === 'document' && (
+        <div className="split wide">
+          <div className="stack">
+            {q.revisions.length > 1 && (
+              <div className="row no-print"><span className="small muted">Showing</span>
+                <Select value={String(shown.revision_no)} onChange={(e) => setRevNo(Number(e.target.value))} options={q.revisions.map((r) => ({ value: String(r.revision_no), label: `Revision ${r.revision_no} — ${labelOf(QUOTE_STATUSES, r.status)}` }))} style={{ width: 'auto' }} />
+              </div>
+            )}
+            <QuoteDocument q={q} r={shown} company={meta.settings.company} />
+          </div>
+          <div className="stack sticky-side no-print">
+            <InternalPanel q={q} r={shown} />
+            <Card title="Issue & response">
+              <Facts items={[
+                ['Status', <QuoteBadge status={shown.status} />],
+                ['Created', `${dateTime(shown.created_at)}${shown.created_by_name ? ` by ${shown.created_by_name}` : ''}`],
+                ['Sent', shown.sent_at ? `${dateTime(shown.sent_at)} · ${shown.channel_label || shown.sent_channel}${shown.issued_by_name ? ` · ${shown.issued_by_name}` : ''}` : 'Not sent'],
+                ['Valid until', shown.validity_date ? <span className={shown.expired ? 'danger-text strong' : ''}>{date(shown.validity_date)}{shown.expired ? ' (expired)' : ''}</span> : null],
+                ['Opened by customer', shown.viewed_at ? dateTime(shown.viewed_at) : shown.status === 'issued' ? 'Not yet' : null],
+                ['Customer response', shown.customer_response],
+                ['Decided', shown.decided_at ? dateTime(shown.decided_at) : null],
+                ['Acceptance', shown.acceptance_type ? `${shown.acceptance_type.toUpperCase()}${shown.acceptance_note ? ` — ${shown.acceptance_note}` : ''}` : null],
+                ['Rejection', shown.rejection_reason ? `${shown.rejection_reason}${shown.decision_note ? ` — ${shown.decision_note}` : ''}` : null],
+                ['Change note', shown.change_note],
+              ]} />
+              {q.documents.filter((d) => d.revision_no === shown.revision_no).map((d) => (
+                <button key={d.id} type="button" className="btn link mt-8" onClick={() => openFile(d.id).catch((e) => toast.error(e.message))}><Icon name="paperclip" size={14} /> {d.original_name}</button>
+              ))}
+            </Card>
           </div>
         </div>
       )}
-      {q.status === 'rejected' && q.rejection_reason && <div className="error-box">Customer rejected: {q.rejection_reason}</div>}
-      {q.customer_feedback && awaiting && <div className="info-box">Customer feedback: {q.customer_feedback}</div>}
-      {q.viewed_at && <div className="small muted no-print">Customer opened this quotation on {dateTime(q.viewed_at)}</div>}
-
-      <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) 330px', alignItems: 'start' }}>
+      {tab === 'revisions' && <Revisions q={q} onShow={(n) => { setRevNo(n); setTab('document'); }} />}
+      {tab === 'approvals' && (
+        <Card title="Approval trail" flush>
+          {!q.approvals.length && <EmptyState icon="shield" title="No approvals requested" message="Quotations within the discount and margin policy need no approval." />}
+          {q.approvals.map((a) => (
+            <div key={a.id} className="alert-row">
+              <span className="grow">
+                <strong>Revision {a.revision_no}</strong> · needs {labelOf(ROLES, a.required_role)} <Badge size="sm" tone={a.status === 'approved' ? 'green' : a.status === 'rejected' ? 'red' : a.status === 'pending' ? 'amber' : 'slate'}>{a.status}</Badge>
+                <div className="small secondary">{a.reasons.join(' · ')}</div>
+                {a.comments && <div className="small">“{a.comments}”</div>}
+              </span>
+              <span className="tiny muted">asked by {a.requested_by_name} {dateTime(a.requested_at)}{a.decided_at ? ` · ${a.status} by ${a.decided_by_name || '—'} ${dateTime(a.decided_at)}` : ''}</span>
+            </div>
+          ))}
+        </Card>
+      )}
+      {tab === 'orders' && (
         <div className="stack">
-          {q.versions.length > 1 && (
-            <div className="row between wrap no-print">
-              <Tabs value={String(version.version_no)} onChange={(v) => setVersionNo(Number(v))}
-                tabs={q.versions.map((v) => ({ key: String(v.version_no), label: `Version ${v.version_no}${v.version_no === q.current_version ? ' (current)' : ''}` }))} />
-              <Button size="sm" icon="compare" onClick={() => setCompareWith(compareWith ? null : q.versions.find((v) => v.version_no !== version.version_no)?.version_no)}>
-                {compareWith ? 'Hide comparison' : 'Compare versions'}
-              </Button>
-            </div>
-          )}
-          {compareWith && <VersionCompare q={q} a={q.versions.find((v) => v.version_no === compareWith)} b={version} onPick={setCompareWith} marginVisible={marginVisible} />}
-
-          <Card className="doc-card">
-            <QuotationDocument q={q} version={version} company={meta.settings.company} />
-          </Card>
-
-          {marginVisible && (
-            <Card title="Internal margin & approval" className="no-print">
-              <div className="grid grid-4">
-                <div><div className="muted small">Cost of goods</div><strong>{inr(version.cost_total)}</strong></div>
-                <div><div className="muted small">Gross margin</div><strong className={version.margin_pct !== null && version.margin_pct < (meta.settings.approvals?.minMarginPct ?? 22) ? 'danger-text' : 'success-text'}>{version.margin_pct === null ? '—' : pct(version.margin_pct)}</strong></div>
-                <div><div className="muted small">Effective discount</div><strong>{pct(version.discount_pct)}</strong></div>
-                <div><div className="muted small">Highest line discount</div><strong>{pct(version.max_line_discount_pct)}</strong></div>
-              </div>
-              {version.approval_role ? (
-                <div className="warn-box" style={{ marginTop: 12 }}>Requires {labelOf(ROLES, version.approval_role)} approval: {version.approval_reasons.join('; ')}</div>
-              ) : <div className="info-box" style={{ marginTop: 12 }}>Within discount and margin policy.</div>}
-            </Card>
-          )}
-
-          {q.approvals.length > 0 && (
-            <Card title="Approval history" flush className="no-print">
-              {q.approvals.map((a) => (
-                <div key={a.id} className="action-row">
-                  <Badge color={a.status === 'approved' ? 'green' : a.status === 'rejected' ? 'red' : a.status === 'pending' ? 'amber' : 'slate'}>{a.status}</Badge>
-                  <span className="grow small">
-                    v{a.version_no} · {labelOf(ROLES, a.required_role)} · {a.reasons.join('; ')}
-                    {a.comments && <div className="tiny muted">“{a.comments}”</div>}
-                  </span>
-                  <span className="tiny muted nowrap">{a.requested_by_name} → {a.decided_by_name || '—'}<div>{date(a.decided_at || a.requested_at)}</div></span>
-                </div>
-              ))}
-            </Card>
-          )}
-        </div>
-
-        <div className="stack no-print">
-          <Card title="Status & history" flush>
-            <div style={{ padding: '10px 14px' }}>
-              <KV items={[
-                ['Owner', q.owner_name],
-                ['Contact', q.contact_name && `${q.contact_name}${q.contact_designation ? ` (${q.contact_designation})` : ''}`],
-                ['Created', `${date(q.created_at)} · v${q.current_version}`],
-                ['Sent', q.sent_at ? dateTime(q.sent_at) : 'Not sent yet'],
-                ['Customer viewed', q.viewed_at ? dateTime(q.viewed_at) : '—'],
-                ['Decision', q.decided_at ? dateTime(q.decided_at) : '—'],
-              ]} />
-            </div>
-            <div className="divider" style={{ margin: 0 }} />
-            {q.events.slice(0, 12).map((e) => (
-              <div key={e.id} className="action-row small">
-                <span className="grow">{eventLabel(e)}{e.note && <div className="tiny muted">{e.note}</div>}</span>
-                <span className="tiny muted nowrap">{date(e.created_at)}<div>{e.user_name}</div></span>
-              </div>
+          <Card title="Orders from this quotation" flush>
+            {!q.orders.length && <EmptyState icon="box" title="Not converted yet" message="Convert the accepted revision when the purchase order arrives." />}
+            {q.orders.map((o) => (
+              <Link key={o.id} to={`/orders/${o.id}`} className="alert-row">
+                <strong>{o.code}</strong><span className="grow small">from revision {o.revision_no} · received {date(o.received_date)}</span><Badge size="sm" tone={o.status === 'confirmed' ? 'blue' : 'slate'}>{o.status}</Badge>
+              </Link>
             ))}
           </Card>
-          <Card title="Share with customer">
-            <div className="stack-sm">
-              <div className="small muted">Send this link — opening it marks the quotation as viewed, and the customer can accept or request a revision.</div>
-              <Input value={portalUrl} readOnly onFocus={(e) => e.target.select()} />
-              <div className="row wrap">
-                <Button size="sm" icon="mail" onClick={() => { window.location.href = `mailto:${q.contact_email || ''}?subject=${encodeURIComponent(`Quotation ${q.number} from ${meta.settings.company?.name || 'Veritek'}`)}&body=${encodeURIComponent(`Dear ${q.contact_name || 'Sir/Madam'},\n\nPlease find our quotation ${q.number} here:\n${portalUrl}\n\nRegards,\n${user.name}`)}`; }}>Email</Button>
-                <Button size="sm" icon="whatsapp" onClick={() => window.open(`https://wa.me/${(q.contact_whatsapp || q.contact_phone || '').replace(/\D/g, '')}?text=${encodeURIComponent(`Quotation ${q.number}: ${portalUrl}`)}`, '_blank')}>WhatsApp</Button>
-                <Button size="sm" icon="eye" onClick={() => window.open(`${portalUrl}?preview=1`, '_blank')}>Preview</Button>
+          {q.revisions.filter((r) => r.conversion).map((r) => (
+            <Card key={r.id} title={`Revision ${r.revision_no}: quoted vs ordered`} flush>
+              <div className="table-wrap">
+                <table className="table compact">
+                  <thead><tr><th>Item</th><th className="num">Quoted</th><th className="num">Ordered</th><th className="num">Not ordered</th></tr></thead>
+                  <tbody>{r.conversion.map((l) => (
+                    <tr key={l.index}><td>{l.product_code && <strong>{l.product_code} </strong>}{l.description}</td><td className="num">{fmtQty(l.qty, l.unit)}</td><td className="num">{l.converted_qty ? fmtQty(l.converted_qty) : '—'}</td>
+                      <td className="num">{l.remaining_qty === null ? 'Unknown' : l.remaining_qty > 0 ? <strong>{fmtQty(l.remaining_qty)}</strong> : '—'}</td></tr>
+                  ))}</tbody>
+                </table>
               </div>
-            </div>
-          </Card>
-          {editable && <Card title="Log a conversation"><Button icon="phone" onClick={() => setModal({ log: true })}>Log interaction about this quotation</Button></Card>}
-        </div>
-      </div>
-
-      {/* modals */}
-      <Modal open={Boolean(modal?.decide)} onClose={() => setModal(null)} size="sm"
-        title={modal?.decide === 'approved' ? 'Approve quotation' : 'Reject quotation'} subtitle={`${q.number} v${q.current_version} · ${inr(q.current.grand_total)}`}>
-        <DecideForm q={q} decision={modal?.decide} approval={pendingApproval} onDone={() => act(() => Promise.resolve(), 'Decision recorded')} />
-      </Modal>
-      <SendModal open={Boolean(modal?.send)} onClose={() => setModal(null)} q={q} onDone={() => act(() => Promise.resolve(), 'Marked as sent')} />
-      <RespondModal open={Boolean(modal?.respond)} onClose={() => setModal(null)} q={q} onDone={() => act(() => Promise.resolve(), 'Response recorded')} />
-      <ConvertModal open={Boolean(modal?.convert)} onClose={() => setModal(null)} q={q} onDone={(orderId) => navigate(`/orders/${orderId}`)} />
-      <LogActivityModal open={Boolean(modal?.log)} onClose={() => setModal(null)} onSaved={reload} customerId={q.customer_id} quotationId={q.id} leadId={q.lead_id} requireNext={Boolean(q.lead_id)} />
-    </div>
-  );
-}
-
-const EVENT_TEXT = {
-  created: 'Drafted', edited: 'Edited', revised: 'Revised', submitted: 'Submitted for approval', auto_approved: 'Auto-approved (within policy)',
-  approved: 'Approved internally', approval_rejected: 'Approval rejected', withdrawn: 'Withdrawn', sent: 'Sent to customer', resent: 'Re-sent',
-  viewed: 'Viewed by customer', responded: 'Customer responded', revision_requested: 'Revision requested', negotiation: 'In negotiation',
-  accepted: 'Accepted by customer', rejected: 'Rejected', expired: 'Expired', converted: 'Converted to order',
-};
-const eventLabel = (e) => `${EVENT_TEXT[e.event] || e.event}${e.version_no ? ` · v${e.version_no}` : ''}`;
-
-export function QuotationDocument({ q, version, company }) {
-  return (
-    <div className="doc">
-      <div className="row between top" style={{ marginBottom: 18 }}>
-        <div>
-          <h2 style={{ fontSize: 18 }}>{company?.name}</h2>
-          <div className="small muted" style={{ maxWidth: 320 }}>{company?.address}</div>
-          <div className="small muted">GSTIN {company?.gstin} · {company?.phone} · {company?.email}</div>
-        </div>
-        <div className="right">
-          <div className="strong" style={{ fontSize: 16 }}>QUOTATION</div>
-          <div className="small">{q.number} · Version {version.version_no}</div>
-          <div className="small muted">Date {date(version.created_at)}</div>
-          {q.valid_until && <div className="small muted">Valid until {date(q.valid_until)}</div>}
-        </div>
-      </div>
-      <div className="row between top" style={{ gap: 24, marginBottom: 16 }}>
-        <div>
-          <div className="tiny muted">TO</div>
-          <div className="strong">{q.customer_name}</div>
-          <div className="small" style={{ maxWidth: 320, whiteSpace: 'pre-wrap' }}>{q.billing_address}</div>
-          {q.customer_gstin && <div className="small muted">GSTIN {q.customer_gstin}</div>}
-          {q.contact_name && <div className="small">Kind attention: {q.contact_name}{q.contact_designation ? `, ${q.contact_designation}` : ''}</div>}
-        </div>
-        <div className="small right">
-          <div className="tiny muted">SUBJECT</div>
-          <div style={{ maxWidth: 280 }}>{q.subject}</div>
-        </div>
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th style={{ width: 28 }}>#</th>
-            <th>Description</th>
-            <th style={{ width: 70 }}>HSN</th>
-            <th className="right" style={{ width: 60 }}>Qty</th>
-            <th className="right" style={{ width: 90 }}>Rate</th>
-            <th className="right" style={{ width: 60 }}>Disc</th>
-            <th className="right" style={{ width: 95 }}>Taxable</th>
-            <th className="right" style={{ width: 55 }}>GST</th>
-            <th className="right" style={{ width: 100 }}>Amount</th>
-          </tr>
-        </thead>
-        <tbody>
-          {version.items.map((it, i) => (
-            <tr key={it.id}>
-              <td>{i + 1}</td>
-              <td>
-                <div className="strong">{it.description}</div>
-                {it.specs && <div className="small muted">{it.specs}</div>}
-                {it.sku && <div className="tiny muted">SKU {it.sku}</div>}
-              </td>
-              <td className="small">{it.hsn}</td>
-              <td className="right num">{number(it.qty)} {it.unit}</td>
-              <td className="right num">{inr(it.unit_price)}</td>
-              <td className="right num">{it.discount_pct ? `${number(it.discount_pct, 1)}%` : '—'}</td>
-              <td className="right num">{inr(it.taxable)}</td>
-              <td className="right num">{it.gst_rate}%</td>
-              <td className="right num">{inr(it.total)}</td>
-            </tr>
+            </Card>
           ))}
-        </tbody>
-      </table>
-      <div className="row between top" style={{ marginTop: 16, gap: 32 }}>
-        <div className="small" style={{ maxWidth: 380 }}>
-          <KV items={[
-            ['Payment terms', version.payment_terms],
-            ['Delivery', version.delivery_terms],
-            ['Warranty', version.warranty_terms],
-            ['Validity', `${version.validity_days} days from quotation date`],
-            version.notes && ['Notes', version.notes],
-          ]} />
-        </div>
-        <div className="totals" style={{ minWidth: 260 }}>
-          <span className="muted">Gross value</span><span className="num">{inr(version.subtotal)}</span>
-          {version.discount_total > 0 && <><span className="muted">Discount</span><span className="num">− {inr(version.discount_total)}</span></>}
-          {version.freight > 0 && <><span className="muted">Freight</span><span className="num">{inr(version.freight)}</span></>}
-          {version.installation > 0 && <><span className="muted">Installation</span><span className="num">{inr(version.installation)}</span></>}
-          <span className="muted">Taxable value</span><span className="num">{inr(version.taxable_total)}</span>
-          <span className="muted">GST</span><span className="num">{inr(version.tax_total)}</span>
-          <span className="grand">Grand total</span><span className="grand num">{inr(version.grand_total)}</span>
-        </div>
-      </div>
-      <div className="small muted" style={{ marginTop: 20 }}>
-        For {company?.name} · {q.owner_name}{q.owner_phone ? ` · ${q.owner_phone}` : ''}{q.owner_email ? ` · ${q.owner_email}` : ''}
-      </div>
-    </div>
-  );
-}
-
-function VersionCompare({ q, a, b, onPick, marginVisible }) {
-  const [left, right] = useMemo(() => (a.version_no < b.version_no ? [a, b] : [b, a]), [a, b]);
-  const keyOf = (it) => `${it.product_id || 'custom'}:${it.description}`;
-  const rows = useMemo(() => {
-    const map = new Map();
-    for (const it of left.items) map.set(keyOf(it), { key: keyOf(it), before: it });
-    for (const it of right.items) {
-      const k = keyOf(it);
-      map.set(k, { ...(map.get(k) || { key: k }), after: it });
-    }
-    return [...map.values()];
-  }, [left, right]);
-  const headerDiffs = [
-    ['Payment terms', left.payment_terms, right.payment_terms], ['Delivery', left.delivery_terms, right.delivery_terms],
-    ['Warranty', left.warranty_terms, right.warranty_terms], ['Freight', inr(left.freight), inr(right.freight)],
-    ['Installation', inr(left.installation), inr(right.installation)], ['Validity', `${left.validity_days} days`, `${right.validity_days} days`],
-  ].filter(([, x, y]) => x !== y);
-
-  return (
-    <Card title={`Comparing version ${left.version_no} → ${right.version_no}`} className="no-print"
-      actions={<Select className="sm" value={String(left.version_no)} onChange={(e) => onPick(Number(e.target.value))} options={q.versions.filter((v) => v.version_no !== right.version_no).map((v) => ({ value: String(v.version_no), label: `Compare with v${v.version_no}` }))} />}>
-      <div className="grid grid-2 small" style={{ marginBottom: 12 }}>
-        <div><strong>Version {left.version_no}</strong> · {left.created_by_name} · {date(left.created_at)}<div className="muted">{left.change_note}</div></div>
-        <div><strong>Version {right.version_no}</strong> · {right.created_by_name} · {date(right.created_at)}<div className="muted">{right.change_note}</div></div>
-      </div>
-      <div className="table-wrap">
-        <table className="table compact">
-          <thead>
-            <tr><th>Item</th><th className="num">Qty</th><th className="num">Unit price</th><th className="num">Discount</th><th className="num">Line total</th><th>Change</th></tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => {
-              const before = r.before;
-              const after = r.after;
-              const changed = before && after && (before.qty !== after.qty || before.unit_price !== after.unit_price || before.discount_pct !== after.discount_pct);
-              const cls = !before ? 'diff-add' : !after ? 'diff-del' : changed ? 'diff-chg' : '';
-              const cell = (fmt, key) => (
-                <span className="num">
-                  {before && <span className={after && before[key] !== after[key] ? 'diff-del' : ''}>{fmt(before[key])}</span>}
-                  {after && (!before || before[key] !== after[key]) && <> {before ? '→ ' : ''}<span className={before ? 'diff-add' : ''}>{fmt(after[key])}</span></>}
-                </span>
-              );
-              return (
-                <tr key={r.key} className={cls}>
-                  <td>{(after || before).description}</td>
-                  <td className="num">{cell((v) => number(v), 'qty')}</td>
-                  <td className="num">{cell((v) => inr(v), 'unit_price')}</td>
-                  <td className="num">{cell((v) => `${number(v, 1)}%`, 'discount_pct')}</td>
-                  <td className="num">{cell((v) => inr(v), 'total')}</td>
-                  <td className="small">{!before ? 'Added' : !after ? 'Removed' : changed ? 'Price / quantity changed' : 'Unchanged'}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-          <tfoot>
-            <tr>
-              <td colSpan={4}>Grand total</td>
-              <td className="num">{inr(left.grand_total)} → <strong>{inr(right.grand_total)}</strong></td>
-              <td className={right.grand_total < left.grand_total ? 'danger-text' : 'success-text'}>{right.grand_total === left.grand_total ? 'No change' : `${right.grand_total < left.grand_total ? '−' : '+'}${inr(Math.abs(right.grand_total - left.grand_total))}`}</td>
-            </tr>
-            <tr>
-              <td colSpan={4}>Effective discount{marginVisible ? ' · margin' : ''}</td>
-              <td className="num">{pct(left.discount_pct)} → {pct(right.discount_pct)}{marginVisible && left.margin_pct !== null && ` · ${pct(left.margin_pct)} → ${pct(right.margin_pct)}`}</td>
-              <td className="small">{right.created_by_name} made this change</td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-      {headerDiffs.length > 0 && (
-        <div style={{ marginTop: 12 }}>
-          <div className="small strong">Terms changed</div>
-          {headerDiffs.map(([label, x, y]) => <div key={label} className="small"><span className="muted">{label}:</span> <span className="diff-del">{x || '—'}</span> → <span className="diff-add">{y || '—'}</span></div>)}
         </div>
       )}
+      {tab === 'history' && (
+        <Card title="History" flush>
+          {!q.history.length && <EmptyState title="Nothing recorded yet" />}
+          {q.history.map((h) => (
+            <div key={h.id} className="alert-row">
+              <span className="grow"><strong>{HISTORY[h.kind] || h.kind.replace(/_/g, ' ')}</strong>{h.data?.revision ? ` · revision ${h.data.revision}` : ''}{h.data?.via ? ` · via ${h.data.via}` : ''}{h.note && <div className="small secondary">{h.note}</div>}</span>
+              <span className="tiny muted">{h.actor_name || 'System'} · {dateTime(h.occurred_at || h.created_at)}</span>
+            </div>
+          ))}
+        </Card>
+      )}
+
+      <Modal open={modal?.type === 'issue'} onClose={() => setModal(null)} title={`Issue ${q.number} rev ${cur.revision_no}`} subtitle="Record that it was actually sent to the customer">
+        {modal?.type === 'issue' && <IssueForm r={cur} enquiry={enquiry} onSaved={() => done('Quotation issued — follow-up scheduled')} />}
+      </Modal>
+      <Modal open={modal?.type === 'outcome'} onClose={() => setModal(null)} title={modal?.outcome === 'accepted' ? 'Customer accepted' : modal?.outcome === 'rejected' ? 'Customer rejected' : 'Awaiting decision'}>
+        {modal?.type === 'outcome' && <OutcomeForm r={modal.r} outcome={modal.outcome} hasTask onSaved={() => done('Outcome recorded')} />}
+      </Modal>
+      <Modal open={modal?.type === 'convert'} size="xl" onClose={() => setModal(null)} title={`Convert ${q.number} rev ${modal?.r?.revision_no} to an order`} subtitle="Review what is copied; add only the order details that are missing.">
+        {modal?.type === 'convert' && <ConvertForm r={modal.r} enquiry={enquiry} onDone={() => { reload(); window.dispatchEvent(new Event('data:changed')); }} />}
+      </Modal>
+      <Modal open={modal?.type === 'decide'} size="sm" onClose={() => setModal(null)} title={modal?.decision === 'approved' ? 'Approve quotation' : 'Reject approval'}>
+        {modal?.type === 'decide' && <DecideForm approvalId={q.pending_approval_id} decision={modal.decision} onSaved={() => done(modal.decision === 'approved' ? 'Approved — the owner can issue it now' : 'Rejected — the owner has been told')} />}
+      </Modal>
+    </div>
+  );
+}
+
+/** The one or two things to do next, depending on where the current revision stands. */
+function NextStep({ q, cur, edit, can, busy, blockedIssue, convertible, setModal, act }) {
+  const toast = useToast();
+  if (cur.status === 'draft') {
+    return (
+      <div className="card" style={{ padding: 14 }}>
+        <div className="row wrap between">
+          <div className="grow">
+            <div className="strong">Draft revision {cur.revision_no} — not sent to the customer</div>
+            <div className="small muted">
+              {!cur.approval_role ? 'Within the discount and margin policy.' : cur.approval_status === 'pending' ? `Waiting for ${labelOf(ROLES, cur.approval_role)} (or above) to approve.` : cur.approval_status === 'approved' ? `Approved by ${cur.approved_by_name || '—'} ${dateTime(cur.approved_at)}.` : cur.approval_status === 'rejected' ? 'The approver rejected these terms — revise the prices and ask again.' : `Needs approval by ${labelOf(ROLES, cur.approval_role)} or above: ${cur.approval_reasons.join('; ')}.`}
+            </div>
+          </div>
+          <div className="row wrap">
+            {edit && cur.approval_status !== 'pending' && <Button icon="edit" to={`/quotations/${q.id}/edit`}>Edit draft</Button>}
+            {edit && cur.approval_role && ['required', 'rejected'].includes(cur.approval_status) && <Button variant="primary" icon="send" loading={busy} onClick={() => act(() => api.post(`/quote-revisions/${cur.id}/submit`), 'Sent for approval')}>Ask for approval</Button>}
+            {edit && cur.approval_status === 'pending' && <Button loading={busy} onClick={() => act(() => api.post(`/quote-revisions/${cur.id}/withdraw`), 'Withdrawn from approval — you can edit the draft')}>Withdraw from approval</Button>}
+            {q.can_decide && <><Button variant="primary" icon="check" onClick={() => setModal({ type: 'decide', decision: 'approved' })}>Approve</Button><Button variant="danger-ghost" onClick={() => setModal({ type: 'decide', decision: 'rejected' })}>Reject</Button></>}
+            {edit && <Button variant="cta" icon="arrowRight" disabled={blockedIssue} title={blockedIssue ? 'Approve it before it is issued' : undefined} onClick={() => setModal({ type: 'issue' })}>Record as sent</Button>}
+          </div>
+        </div>
+        {blockedIssue && cur.approval_status !== 'pending' && <div className="tiny muted mt-8">Issuing is blocked until the revision is approved (policy setting).</div>}
+      </div>
+    );
+  }
+  const hasDraft = q.revisions.some((r) => r.status === 'draft');
+  return (
+    <div className="card" style={{ padding: 14 }}>
+      <div className="row wrap between">
+        <div className="grow">
+          <div className="strong">{cur.status === 'issued' ? `Issued ${dateTime(cur.sent_at)} — awaiting the customer’s decision` : cur.status === 'accepted' ? `Accepted ${dateTime(cur.decided_at)}${q.orders.length ? '' : ' — convert it to an order'}` : cur.status === 'rejected' ? `Rejected ${dateTime(cur.decided_at)}` : labelOf(QUOTE_STATUSES, cur.status)}</div>
+          {cur.customer_response && <div className="small">{cur.customer_response}</div>}
+          {cur.expired && <div className="small warning-text">Validity expired {date(cur.validity_date)} — an expired quotation needs the coordinator or management to confirm the terms before conversion.</div>}
+        </div>
+        <div className="row wrap">
+          {edit && cur.status === 'issued' && <>
+            <Button variant="primary" onClick={() => setModal({ type: 'outcome', r: cur, outcome: 'accepted' })}>Accepted</Button>
+            <Button onClick={() => setModal({ type: 'outcome', r: cur, outcome: 'awaiting' })}>Awaiting decision</Button>
+            <Button variant="danger-ghost" onClick={() => setModal({ type: 'outcome', r: cur, outcome: 'rejected' })}>Rejected</Button>
+          </>}
+          {convertible && can('orders.edit') && <Button variant="cta" icon="box" onClick={() => setModal({ type: 'convert', r: convertible })}>Convert to order</Button>}
+          {edit && !hasDraft && cur.status !== 'accepted' && <Button icon="plus" loading={busy} onClick={() => act(() => api.post(`/quotations/${q.id}/revisions`, { change_note: 'Revised offer' }), 'New draft revision — earlier revisions stay as issued')}>New revision</Button>}
+          {edit && cur.status === 'accepted' && q.enquiry_id && <Button variant="ghost" onClick={() => toast.info('A fresh requirement from this customer becomes a new linked enquiry — open the enquiry to create it.')}>New requirement?</Button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Customer-facing layout: what the customer received (or will receive) for this revision. */
+export function QuoteDocument({ q, r, company }) {
+  const showValues = r.lines.some((l) => l.unit_price_minor !== undefined);
+  return (
+    <div className="doc">
+      <div className="row between top wrap" style={{ gap: 16 }}>
+        <div>
+          <div className="brand-name" style={{ color: 'var(--heading)', fontSize: 20 }}><span className="slash" aria-hidden style={{ width: 8, height: 20, background: 'var(--cta)', display: 'inline-block', transform: 'skewX(-18deg)', borderRadius: 2 }} />{company.short || 'VERITEK'}</div>
+          <div className="small strong">{company.name}</div>
+          {company.address && <div className="tiny muted" style={{ maxWidth: 320 }}>{company.address}</div>}
+          <div className="tiny muted">{[company.phone, company.email, company.website].filter(Boolean).join(' · ')}</div>
+          {company.gstin && <div className="tiny muted">GSTIN {company.gstin}</div>}
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <h2 style={{ fontSize: 22 }}>Quotation</h2>
+          <div className="strong mono">{q.number} / R{r.revision_no}</div>
+          <div className="small">Date {date(r.sent_at || r.created_at, { year: true })}</div>
+          {r.validity_date && <div className="small">Valid until {date(r.validity_date, { year: true })}</div>}
+          {r.status === 'draft' && <Badge tone="amber" size="sm">Draft — not issued</Badge>}
+        </div>
+      </div>
+      <div className="divider" />
+      <div className="grid grid-2" style={{ gap: 12 }}>
+        <div>
+          <div className="tiny muted">To</div>
+          <div className="strong">{q.customer_name}</div>
+          {q.billing_address && <div className="small" style={{ whiteSpace: 'pre-wrap' }}>{q.billing_address}</div>}
+          {!q.billing_address && <div className="small">{[q.city, q.state].filter(Boolean).join(', ')}</div>}
+          {q.customer_gstin && <div className="tiny muted">GSTIN {q.customer_gstin}</div>}
+          {q.contact_name && <div className="small mt-8">Attn: {q.contact_name}{q.contact_designation ? `, ${q.contact_designation}` : ''}</div>}
+        </div>
+        <div>
+          {q.subject && <><div className="tiny muted">Subject</div><div className="strong">{q.subject}</div></>}
+          <div className="tiny muted mt-8">Your contact</div>
+          <div className="small">{q.owner_name}{q.owner_phone ? ` · ${q.owner_phone}` : ''}{q.owner_email ? ` · ${q.owner_email}` : ''}</div>
+        </div>
+      </div>
+      <div className="table-wrap mt-16">
+        <table>
+          <thead>
+            <tr><th>#</th><th>Item</th><th>HSN</th><th className="num">Qty</th>{showValues && <><th className="num">Unit price</th><th className="num">Disc.</th><th className="num">GST</th><th className="num">Amount</th></>}</tr>
+          </thead>
+          <tbody>
+            {r.lines.map((l, i) => (
+              <tr key={l.index ?? i}>
+                <td>{i + 1}</td>
+                <td>{l.product_code && <strong>{l.product_code} </strong>}{l.description}{l.spec && <div className="tiny muted">{l.spec}</div>}{l.lead_time_days !== null && l.lead_time_days !== undefined && <div className="tiny muted">Lead time ~{l.lead_time_days} days</div>}</td>
+                <td className="small">{l.hsn || '—'}</td>
+                <td className="num">{l.qty === null ? 'TBC' : fmtQty(l.qty, l.unit)}</td>
+                {showValues && <>
+                  <td className="num"><Money minor={l.unit_price_minor} currency={r.currency} /></td>
+                  <td className="num">{l.discount_pct ? `${number(l.discount_pct, 2)}%` : '—'}</td>
+                  <td className="num">{number(l.gst_rate, 2)}%</td>
+                  <td className="num"><Money minor={l.line_total_minor} currency={r.currency} /></td>
+                </>}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {showValues && r.total_minor !== undefined && (
+        <div className="row end mt-12">
+          <div className="totals" style={{ minWidth: 300 }}>
+            <span className="muted">Sub-total</span><span className="num"><Money minor={r.subtotal_minor} currency={r.currency} /></span>
+            {r.discount_total_minor > 0 && <><span className="muted">Discount</span><span className="num">−<Money minor={r.discount_total_minor} currency={r.currency} /></span></>}
+            {r.freight_minor > 0 && <><span className="muted">Freight</span><span className="num"><Money minor={r.freight_minor} currency={r.currency} /></span></>}
+            {r.installation_minor > 0 && <><span className="muted">Installation</span><span className="num"><Money minor={r.installation_minor} currency={r.currency} /></span></>}
+            <span>Total before tax</span><span className="num strong"><Money minor={r.total_minor} currency={r.currency} /></span>
+            <span className="muted">GST</span><span className="num"><Money minor={r.tax_total_minor} currency={r.currency} /></span>
+            <span className="grand">Grand total ({r.currency})</span><span className="grand num"><Money minor={r.grand_total_minor} currency={r.currency} /></span>
+          </div>
+        </div>
+      )}
+      <div className="divider" />
+      <Facts items={[
+        ['Payment terms', r.payment_terms],
+        ['Delivery', r.delivery_terms ? `${r.delivery_terms} (indicative)` : null],
+        ['Warranty', r.warranty_terms],
+        ['Notes', r.notes],
+      ]} />
+      <div className="tiny muted mt-12">Prices are exclusive of GST unless stated. Delivery periods are estimates and are confirmed on order acceptance.</div>
+    </div>
+  );
+}
+
+/** Margin, cost and approval reasons — never part of the customer document. */
+function InternalPanel({ q, r }) {
+  const { can } = useAuth();
+  const meta = useMeta();
+  if (!can('values.view')) return null;
+  const minMargin = meta.settings.approvals?.minMarginPct;
+  return (
+    <Card title="Internal pricing check">
+      <Facts items={[
+        ['Price list', labelOf(PRICE_LISTS, r.price_list || q.price_list)],
+        r.list_total_minor !== undefined && ['At list price', <Money minor={r.list_total_minor} currency={r.currency} />],
+        ['Overall discount', pct(r.discount_pct)],
+        ['Largest line discount', pct(r.max_line_discount_pct)],
+        can('margin.view') && ['Cost', r.cost_total_minor === null ? 'Unknown' : <Money minor={r.cost_total_minor} currency={r.currency} />],
+        can('margin.view') && ['Margin', r.margin_pct === null || r.margin_pct === undefined ? 'Unknown' : <span className={minMargin !== undefined && r.margin_pct < minMargin ? 'danger-text strong' : 'strong'}>{pct(r.margin_pct)}</span>],
+        can('margin.view') && r.below_min_price ? ['Minimum price', <span className="danger-text">Below on one or more lines</span>] : null,
+        ['Approval', r.approval_role ? <span><ApprovalBadge status={r.approval_status} size="sm" /> {labelOf(ROLES, r.approval_role)}</span> : 'Within policy'],
+      ]} />
+      {r.approval_reasons?.length > 0 && <ul className="small secondary" style={{ margin: '8px 0 0', paddingLeft: 18 }}>{r.approval_reasons.map((x) => <li key={x}>{x}</li>)}</ul>}
+      {r.approved_by_name && <div className="small mt-8">Approved by {r.approved_by_name} {dateTime(r.approved_at)}</div>}
     </Card>
   );
 }
 
-function DecideForm({ q, decision, approval, onDone }) {
-  const toast = useToast();
-  const [comments, setComments] = useState(decision === 'approved' ? 'Approved' : '');
-  const [busy, setBusy] = useState(false);
-  const submit = async () => {
-    setBusy(true);
-    try {
-      await api.post(`/approvals/${approval.id}/decide`, { decision, comments });
-      toast.success(decision === 'approved' ? 'Approved' : 'Rejected and returned to draft');
-      onDone();
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setBusy(false);
-    }
-  };
+function Revisions({ q, onShow }) {
+  const [a, setA] = useState(q.revisions[1]?.revision_no ?? q.revisions[0].revision_no);
+  const [b, setB] = useState(q.revisions[0].revision_no);
+  const ra = q.revisions.find((r) => r.revision_no === Number(a));
+  const rb = q.revisions.find((r) => r.revision_no === Number(b));
+  const diff = useMemo(() => diffRevisions(ra, rb), [ra, rb]);
+  const opts = q.revisions.map((r) => ({ value: String(r.revision_no), label: `Revision ${r.revision_no}` }));
   return (
     <div className="stack">
-      <div className="small muted">{approval?.reasons.join('; ')}</div>
-      <div className="grid grid-3 small">
-        <div><div className="muted">Discount</div><strong>{pct(approval?.discount_pct)}</strong></div>
-        <div><div className="muted">Margin</div><strong>{approval?.margin_pct === null ? '—' : pct(approval?.margin_pct)}</strong></div>
-        <div><div className="muted">Value</div><strong>{inrCompact(approval?.amount)}</strong></div>
-      </div>
-      <Field label="Comments" required={decision === 'rejected'}><Textarea rows={3} value={comments} onChange={(e) => setComments(e.target.value)} placeholder={decision === 'approved' ? 'Optional note for the salesperson' : 'Explain what must change'} /></Field>
-      <div className="row" style={{ justifyContent: 'flex-end' }}>
-        <Button variant={decision === 'approved' ? 'primary' : 'danger'} loading={busy} onClick={submit}>{decision === 'approved' ? 'Approve' : 'Reject'}</Button>
-      </div>
+      <Card title="All revisions" sub="Issued revisions never change; each change is a new revision" flush>
+        <div className="table-wrap">
+          <table className="table">
+            <thead><tr><th>Revision</th><th>Status</th><th className="num">Total before tax</th><th className="num">Discount</th><th>Sent</th><th>Valid until</th><th>Change note</th><th /></tr></thead>
+            <tbody>{q.revisions.map((r) => (
+              <tr key={r.id}>
+                <td><strong>R{r.revision_no}</strong><div className="sub">{dateTime(r.created_at)}</div></td>
+                <td><QuoteBadge status={r.status} size="sm" /> {r.status === 'draft' && <ApprovalBadge status={r.approval_status} size="sm" />}</td>
+                <td className="num"><Money minor={r.total_minor} currency={r.currency} /></td>
+                <td className="num">{pct(r.discount_pct)}</td>
+                <td>{r.sent_at ? dateTime(r.sent_at) : <span className="muted">—</span>}</td>
+                <td>{date(r.validity_date)}</td>
+                <td className="small">{r.change_note || '—'}</td>
+                <td><Button size="xs" onClick={() => onShow(r.revision_no)}>View</Button></td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      </Card>
+      {q.revisions.length > 1 && (
+        <Card title="Compare revisions" actions={<div className="row"><Select value={String(a)} onChange={(e) => setA(e.target.value)} options={opts} aria-label="From revision" /><Icon name="arrowRight" size={14} /><Select value={String(b)} onChange={(e) => setB(e.target.value)} options={opts} aria-label="To revision" /></div>}>
+          <div className="table-wrap">
+            <table className="table compact">
+              <thead><tr><th>Item</th><th className="num">Qty</th><th className="num">Unit price</th><th className="num">Discount</th><th className="num">Line value</th></tr></thead>
+              <tbody>{diff.rows.map((d) => (
+                <tr key={d.key} className={d.kind === 'added' ? 'diff-add' : d.kind === 'removed' ? 'diff-del' : ''}>
+                  <td>{d.label}{d.kind !== 'same' && d.kind !== 'changed' && <div className="sub">{d.kind === 'added' ? `Added in R${b}` : `Removed in R${b}`}</div>}</td>
+                  {['qty', 'unit_price_minor', 'discount_pct', 'line_total_minor'].map((k) => (
+                    <td key={k} className={`num ${d.changed.includes(k) ? 'diff-chg' : ''}`}>
+                      {d.changed.includes(k) && d.from ? <><span className="muted" style={{ textDecoration: 'line-through' }}>{fmtField(k, d.from[k], ra.currency)}</span> → </> : null}
+                      {fmtField(k, (d.to || d.from)[k], rb.currency)}
+                    </td>
+                  ))}
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+          <div className="row wrap mt-12 small">
+            <span>Total before tax: <strong>{money(ra.total_minor, ra.currency)}</strong> → <strong>{money(rb.total_minor, rb.currency)}</strong></span>
+            <span>· Discount {pct(ra.discount_pct)} → {pct(rb.discount_pct)}</span>
+            {['payment_terms', 'delivery_terms', 'warranty_terms', 'validity_date'].filter((k) => (ra[k] || '') !== (rb[k] || '')).map((k) => <span key={k}>· {k.replace(/_/g, ' ')} changed</span>)}
+          </div>
+        </Card>
+      )}
     </div>
   );
 }
 
-function SendModal({ open, onClose, q, onDone }) {
-  const toast = useToast();
-  const [channel, setChannel] = useState('email');
-  const [validUntil, setValidUntil] = useState(addDaysStr(todayStr(), q.current?.validity_days || 30));
-  const [busy, setBusy] = useState(false);
-  const send = async () => {
-    setBusy(true);
-    try {
-      await api.post(`/quotations/${q.id}/send`, { channel, valid_until: validUntil });
-      toast.success('Marked as sent — a follow-up has been scheduled');
-      onDone();
-      onClose();
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <Modal open={open} onClose={onClose} title="Send quotation" subtitle={`${q.number} v${q.current_version} to ${q.customer_name}`}
-      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} onClick={send} icon="send">Mark as sent</Button></>}>
-      <div className="stack">
-        <div className="form-grid">
-          <Field label="Sent via"><Select value={channel} onChange={(e) => setChannel(e.target.value)} options={[{ value: 'email', label: 'Email' }, { value: 'whatsapp', label: 'WhatsApp' }, { value: 'courier', label: 'Printed / courier' }, { value: 'portal', label: 'Customer link' }]} /></Field>
-          <Field label="Valid until" hint={relativeDay(validUntil)}><Input type="date" value={validUntil} min={todayStr()} onChange={(e) => setValidUntil(e.target.value)} /></Field>
-        </div>
-        <div className="info-box small">A follow-up task is created automatically, and the lead moves to “Quotation sent”. Use the share buttons to actually deliver the PDF or link.</div>
-      </div>
-    </Modal>
-  );
+const fmtField = (k, v, currency) => {
+  if (v === null || v === undefined) return '—';
+  if (k === 'qty') return fmtQty(v);
+  if (k === 'discount_pct') return `${number(v, 2)}%`;
+  return money(v, currency);
+};
+
+function diffRevisions(a, b) {
+  if (!a || !b) return { rows: [] };
+  const key = (l) => `${l.product_id || 'c'}:${l.product_id ? JSON.stringify((l.config?.options || []).map((o) => o.id).sort()) : l.description}`;
+  const fromMap = new Map(a.lines.map((l) => [key(l), l]));
+  const rows = [];
+  for (const l of b.lines) {
+    const k = key(l);
+    const prev = fromMap.get(k);
+    fromMap.delete(k);
+    const changed = prev ? ['qty', 'unit_price_minor', 'discount_pct', 'line_total_minor'].filter((f) => (prev[f] ?? null) !== (l[f] ?? null)) : [];
+    rows.push({ key: k, label: `${l.product_code ? `${l.product_code} ` : ''}${l.description}`, from: prev, to: l, changed, kind: !prev ? 'added' : changed.length ? 'changed' : 'same' });
+  }
+  for (const [k, l] of fromMap) rows.push({ key: k, label: `${l.product_code ? `${l.product_code} ` : ''}${l.description}`, from: l, to: null, changed: [], kind: 'removed' });
+  return { rows };
 }
 
-function RespondModal({ open, onClose, q, onDone }) {
-  const toast = useToast();
-  const [form, setForm] = useState({ status: 'responded', note: '', reason: '', mark_lead_lost: false, competitor: '' });
-  const [busy, setBusy] = useState(false);
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e?.target ? (e.target.type === 'checkbox' ? e.target.checked : e.target.value) : e }));
-  const submit = async () => {
-    setBusy(true);
-    try {
-      await api.post(`/quotations/${q.id}/status`, form);
-      toast.success('Response recorded');
-      onDone();
-      onClose();
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setBusy(false);
-    }
-  };
+function DecideForm({ approvalId, decision, onSaved }) {
+  const save = useSave();
+  const [comments, setComments] = useState('');
   return (
-    <Modal open={open} onClose={onClose} title="Record customer response" subtitle={q.number}
-      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} onClick={submit}>Save</Button></>}>
-      <div className="stack">
-        <Field label="What happened?">
-          <Select value={form.status} onChange={set('status')} options={[
-            { value: 'viewed', label: 'Customer acknowledged / viewed' },
-            { value: 'responded', label: 'Customer responded' },
-            { value: 'negotiation', label: 'Under negotiation' },
-            { value: 'revision_requested', label: 'Revision requested' },
-            { value: 'accepted', label: 'Accepted — PO expected' },
-            { value: 'rejected', label: 'Rejected / lost' },
-          ]} />
-        </Field>
-        <Field label="Notes" hint="Customer's words, objections, what they asked for"><Textarea rows={3} value={form.note} onChange={set('note')} /></Field>
-        {form.status === 'rejected' && (
-          <>
-            <Field label="Reason" required><Select value={form.reason} onChange={set('reason')} placeholder="Select…" options={LOSS_REASONS} /></Field>
-            <Field label="Lost to competitor"><Input list="cmp" value={form.competitor} onChange={set('competitor')} /><datalist id="cmp">{COMPETITORS.map((c) => <option key={c} value={c} />)}</datalist></Field>
-            {q.lead_id && <Checkbox label="Also mark the linked lead as lost" checked={form.mark_lead_lost} onChange={(v) => setForm((f) => ({ ...f, mark_lead_lost: v }))} />}
-          </>
-        )}
-        {form.status === 'revision_requested' && <div className="info-box small">Use “Revise” afterwards to create the next version with the new prices.</div>}
-      </div>
-    </Modal>
-  );
-}
-
-function ConvertModal({ open, onClose, q, onDone }) {
-  const toast = useToast();
-  const meta = useMeta();
-  const [form, setForm] = useState({ po_date: todayStr(), priority: 'normal', advance_pct: 30, win_reason: '' });
-  const [po, setPo] = useState([]);
-  const [busy, setBusy] = useState(false);
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e?.target ? e.target.value : e }));
-  const submit = async () => {
-    setBusy(true);
-    try {
-      const res = await api.post(`/quotations/${q.id}/convert`, { ...form, po_attachment_id: po[0]?.id });
-      toast.success('Sales order created — production and accounts notified');
-      onDone(res.id);
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const advanceValue = (q.current?.grand_total || 0) * (Number(form.advance_pct) || 0) / 100;
-  return (
-    <Modal open={open} onClose={onClose} size="lg" title="Convert to sales order" subtitle={`${q.number} v${q.current_version} · ${inr(q.current?.grand_total)}`}
-      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} onClick={submit} icon="orders">Create sales order</Button></>}>
-      <div className="form-grid">
-        <Field label="Customer PO number" required><Input value={form.customer_po_number} onChange={set('customer_po_number')} autoFocus placeholder="As printed on the customer's PO" /></Field>
-        <Field label="PO date"><Input type="date" value={form.po_date} onChange={set('po_date')} /></Field>
-        <Field label="PO document" className="full" hint="Attach the customer's purchase order"><PendingAttachments value={po} onChange={setPo} voice={false} kind="po" /></Field>
-        <Field label="Expected delivery date" hint="Blank = quoted lead time"><Input type="date" value={form.expected_delivery_date} onChange={set('expected_delivery_date')} min={todayStr()} /></Field>
-        <Field label="Production priority"><Select value={form.priority} onChange={set('priority')} options={PRIORITIES} /></Field>
-        <Field label="Factory / unit"><Select value={form.factory_id} onChange={set('factory_id')} placeholder="Default unit" options={meta.factories.map((f) => ({ value: f.id, label: f.name }))} /></Field>
-        <Field label="Advance required (%)" hint={form.advance_pct > 0 ? `${inr(advanceValue)} to be collected before production` : 'No advance — credit terms'}>
-          <Input type="number" min="0" max="100" value={form.advance_pct} onChange={set('advance_pct')} />
-        </Field>
-        <Field label="Why did we win?"><Select value={form.win_reason} onChange={set('win_reason')} placeholder="—" options={WIN_REASONS} /></Field>
-        <Field label="Internal notes" className="full"><Textarea rows={2} value={form.internal_notes} onChange={set('internal_notes')} placeholder="Special instructions for commercial / production" /></Field>
-        <div className="info-box full small">The order is created with the quoted items and prices, the linked lead is marked won, and commercial and accounts are notified.</div>
-      </div>
-    </Modal>
+    <form className="stack-sm" onSubmit={(e) => { e.preventDefault(); save.run(async () => { await api.post(`/approvals/${approvalId}/decide`, { decision, comments }); onSaved(); }); }}>
+      {decision === 'approved' ? <Notice tone="info">Approving lets the owner issue these exact prices. Any later change to the draft needs a fresh approval.</Notice> : <Notice tone="warn">The owner is told the reason and revises the offer.</Notice>}
+      <Field label={decision === 'approved' ? 'Comment' : 'Reason for rejecting'} required={decision === 'rejected'} optional={decision === 'approved'} error={save.fields.comments}>
+        <Textarea rows={3} value={comments} onChange={(e) => setComments(e.target.value)} maxLength={500} />
+      </Field>
+      <div className="row between"><SaveStatus save={save} /><Button type="submit" variant={decision === 'approved' ? 'primary' : 'danger'} loading={save.saving}>{decision === 'approved' ? 'Approve' : 'Reject'}</Button></div>
+    </form>
   );
 }

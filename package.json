@@ -1,8 +1,8 @@
 {
   "name": "veritek-crm",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "Manufacturing sales & order CRM: lead to quotation, production, dispatch, payment, service and repeat business",
+  "description": "Veritek Customer & Order Control System: past customers, enquiries, quotations, active orders and one unified customer profile",
   "type": "module",
   "engines": {
     "node": ">=22.13"
@@ -15,10 +15,13 @@
     "start": "node --no-warnings=ExperimentalWarning server/index.js",
     "seed": "node --no-warnings=ExperimentalWarning server/seed.js --reset",
     "test": "node --no-warnings=ExperimentalWarning tests/run.mjs",
-    "snapshot": "node --no-warnings=ExperimentalWarning scripts/snapshot.js"
+    "snapshot": "node --no-warnings=ExperimentalWarning scripts/snapshot.js",
+    "backup": "node --no-warnings=ExperimentalWarning scripts/backup.js",
+    "restore-test": "node --no-warnings=ExperimentalWarning scripts/backup.js --restore-test"
   },
   "dependencies": {
-    "express": "^5.1.0"
+    "express": "^5.1.0",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^5.0.0",

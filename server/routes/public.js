@@ -1,95 +1,162 @@
-// Customer-facing links (no login): view/respond to a quotation and track an order.
+// Links that work without signing in: the customer's quotation (view / accept / ask for a revision), order
+// tracking, and the scan pages behind object QR codes. Each link is a long random token or a permanent
+// object id; nothing internal (costs, margins, notes) is ever returned.
 import { Router } from 'express';
-import { all, get, getSetting } from '../db.js';
-import { DEFAULT_SETTINGS, ORDER_STAGES, stageIndex } from '../../shared/constants.js';
-import { notFound, badRequest, strOrNull, HttpError } from '../util.js';
-import { setQuotationStatus, loadQuotation } from '../services/quotes.js';
-import { loadOrderRow } from '../services/orders.js';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import { get } from '../db.js';
+import { HttpError, notFound, settings, installSecret } from '../util.js';
+import { h } from './helpers.js';
+import { portalQuotation, portalRespond } from '../services/quotes.js';
+import { orderTracking } from '../services/orders.js';
+import {
+  checkObjectPassword, publicView, recordScan, objectFiles, objectSettings, filePath,
+} from '../services/objects.js';
+import { xlsxToSheets, docxToBlocks, csvToRows, previewKind } from '../lib/docpreview.js';
 
 const r = Router();
 
+// Simple per-IP rate limit for public links.
 const hits = new Map();
 r.use((req, _res, next) => {
-  const now = Date.now();
-  const list = (hits.get(req.ip) || []).filter((t) => now - t < 60000);
-  if (list.length > 60) return next(new HttpError(429, 'Too many requests'));
-  list.push(now);
+  const t = Date.now();
+  const list = (hits.get(req.ip) || []).filter((x) => t - x < 60000);
+  if (list.length > 90) return next(new HttpError(429, 'Too many requests — please wait a minute'));
+  list.push(t);
   hits.set(req.ip, list);
+  if (hits.size > 5000) hits.clear();
   next();
 });
 
-const company = () => ({ ...DEFAULT_SETTINGS.company, ...getSetting('company', {}) });
+const publicUser = { values_access: true, permissions: [] };
+const pub = (fn) => (req, res, next) => {
+  req.user = publicUser;
+  return h(fn)(req, res, next);
+};
 
-r.get('/quotations/:token', (req, res) => {
-  const row = get('SELECT id, status FROM quotations WHERE public_token = ?', req.params.token);
-  if (!row || ['draft', 'approval_pending', 'approved'].includes(row.status)) throw notFound('Quotation');
-  if (row.status === 'sent' && !req.query.preview) setQuotationStatus(row.id, { status: 'viewed' }, null);
-  const q = loadQuotation(row.id);
-  const v = q.current;
-  res.json({
-    company: company(),
-    number: q.number, subject: q.subject, status: q.status, version: v.version_no, valid_until: q.valid_until, sent_at: q.sent_at,
-    customer: { name: q.customer_name, gstin: q.customer_gstin, billing_address: q.billing_address, city: q.city, state: q.state },
-    contact: { name: q.contact_name, designation: q.contact_designation },
-    owner: { name: q.owner_name, email: q.owner_email, phone: q.owner_phone },
-    terms: { payment: v.payment_terms, delivery: v.delivery_terms, warranty: v.warranty_terms, notes: v.notes },
-    items: v.items.map((it) => ({
-      description: it.description, specs: it.specs, sku: it.sku, hsn: it.hsn, unit: it.unit, qty: it.qty, unit_price: it.unit_price,
-      discount_pct: it.discount_pct, gst_rate: it.gst_rate, taxable: it.taxable, tax: it.tax, total: it.total,
-    })),
-    totals: {
-      subtotal: v.subtotal, discount_total: v.discount_total, freight: v.freight, installation: v.installation,
-      taxable_total: v.taxable_total, tax_total: v.tax_total, grand_total: v.grand_total,
-    },
-    can_respond: ['sent', 'viewed', 'responded', 'negotiation'].includes(q.status) && (!q.valid_until || q.valid_until >= new Date().toISOString().slice(0, 10)),
-    customer_feedback: q.customer_feedback,
-  });
+// ------------------------------------------------------------------ quotation link
+r.get('/quotations/:token', pub((req) => portalQuotation(req.params.token)));
+r.post('/quotations/:token/respond', pub((req) => portalRespond(req.params.token, req.body || {})));
+
+// ------------------------------------------------------------------ order tracking
+r.get('/orders/:token', pub((req) => orderTracking(req.params.token)));
+
+// ------------------------------------------------------------------ object scanning
+/** Short-lived proof that a visitor entered the right password for this object. */
+const unlockSecret = () => `object-unlock:${installSecret()}`;
+const unlockToken = (objectId) => {
+  const expires = Date.now() + 2 * 60 * 60 * 1000;
+  const payload = `${objectId}.${expires}`;
+  return `${payload}.${crypto.createHmac('sha256', unlockSecret()).update(payload).digest('base64url')}`;
+};
+function unlockValid(objectId, value) {
+  const [oid, expires, signature] = String(value || '').split('.');
+  if (Number(oid) !== Number(objectId) || !expires || Number(expires) < Date.now()) return false;
+  const expected = crypto.createHmac('sha256', unlockSecret()).update(`${oid}.${expires}`).digest('base64url');
+  return expected.length === signature?.length && crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+}
+
+function loadPublicObject(publicId) {
+  return get(`SELECT o.*, c.name AS category_name FROM objects o LEFT JOIN object_categories c ON c.id = o.category_id WHERE o.public_id = ?`,
+    String(publicId || '').toUpperCase());
+}
+
+const brandingFor = () => {
+  const company = settings().company;
+  return { name: company.name, phone: company.phone, email: company.email, website: company.website, color: objectSettings().brandColor };
+};
+const baseUrl = (req) => (objectSettings().publicBaseUrl || `${req.get('x-forwarded-proto') || req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+
+/** The scan endpoint: resolves a permanent id to whatever the object holds today. */
+r.get('/objects/:publicId', (req, res, next) => {
+  try {
+    const o = loadPublicObject(req.params.publicId);
+    if (!o || o.deleted_at) return res.status(404).json({ error: 'This code is not in use.', state: 'unknown', branding: brandingFor() });
+    const branding = brandingFor();
+    recordScan(o.id, req, req.query.src || 'qr');
+    if (o.status === 'archived') return res.json({ state: 'archived', name: o.name, message: o.archive_note || objectSettings().archivedMessage, branding });
+    if (o.visibility === 'private') return res.json({ state: 'private', name: o.name, branding });
+    if (o.visibility === 'password' && !unlockValid(o.id, req.query.unlock)) return res.json({ state: 'locked', name: o.name, branding });
+    return res.json({ state: 'ok', branding, object: publicView(o, { baseUrl: baseUrl(req) }) });
+  } catch (err) {
+    return next(err);
+  }
 });
 
-r.post('/quotations/:token/respond', (req, res) => {
-  const row = get('SELECT id, status FROM quotations WHERE public_token = ?', req.params.token);
-  if (!row) throw notFound('Quotation');
-  const name = strOrNull(req.body.name);
-  const message = strOrNull(req.body.message);
-  if (!name) throw badRequest('Please enter your name');
-  const map = { accept: 'accepted', revision: 'revision_requested', comment: 'responded' };
-  const status = map[req.body.action];
-  if (!status) throw badRequest('Unknown response');
-  if ((status === 'revision_requested' || status === 'responded') && !message) throw badRequest('Please tell us what you need');
-  setQuotationStatus(row.id, { status, note: `${name}: ${message || 'Accepted the quotation'}` }, null);
-  res.json({ ok: true, status });
+r.post('/objects/:publicId/unlock', (req, res, next) => {
+  try {
+    const o = loadPublicObject(req.params.publicId);
+    if (!o || o.deleted_at || o.visibility !== 'password') throw notFound('Object');
+    if (!checkObjectPassword(o, req.body?.password)) throw new HttpError(401, 'That password does not match');
+    res.json({ unlock: unlockToken(o.id), branding: brandingFor(), object: publicView(o, { baseUrl: baseUrl(req) }) });
+  } catch (err) {
+    next(err);
+  }
 });
 
-r.get('/orders/:token', (req, res) => {
-  const row = get('SELECT id FROM sales_orders WHERE tracking_token = ?', req.params.token);
-  if (!row) throw notFound('Order');
-  const o = loadOrderRow(row.id);
-  const p = get('SELECT planned_completion, revised_completion, actual_completion, qc_status FROM production WHERE order_id = ?', o.id);
-  const milestones = [
-    { key: 'confirmed', label: 'Order confirmed', done: stageIndex(ORDER_STAGES, o.stage) >= stageIndex(ORDER_STAGES, 'order_confirmed') },
-    { key: 'production', label: 'In production', done: stageIndex(ORDER_STAGES, o.stage) >= stageIndex(ORDER_STAGES, 'production_scheduled') },
-    { key: 'quality', label: 'Quality checked', done: stageIndex(ORDER_STAGES, o.stage) >= stageIndex(ORDER_STAGES, 'packing') },
-    { key: 'dispatched', label: 'Dispatched', done: o.qty_dispatched > 0, partial: o.dispatch_status === 'partial' },
-    { key: 'delivered', label: 'Delivered', done: stageIndex(ORDER_STAGES, o.stage) >= stageIndex(ORDER_STAGES, 'delivered') },
-  ];
-  res.json({
-    company: company(),
-    number: o.number, customer_po_number: o.customer_po_number, customer_name: o.customer_name, order_date: o.order_date,
-    stage: o.stage, stage_label: ORDER_STAGES.find((s) => s.value === o.stage)?.label, status: o.status,
-    expected_delivery_date: o.delivery_date, revised: Boolean(o.revised_delivery_date), planned_completion: p?.revised_completion || p?.planned_completion,
-    milestones,
-    items: all(
-      `SELECT oi.description, oi.qty, oi.unit, oi.qty_produced, (SELECT COALESCE(SUM(di.qty), 0) FROM dispatch_items di WHERE di.order_item_id = oi.id) AS qty_dispatched
-       FROM order_items oi WHERE oi.order_id = ?`,
-      o.id,
-    ),
-    updates: all('SELECT note, created_at FROM production_updates WHERE order_id = ? AND visible_to_customer = 1 ORDER BY created_at DESC LIMIT 30', o.id),
-    dispatches: all(
-      `SELECT number, dispatch_type, status, dispatch_date, expected_delivery_date, delivered_date, transporter, vehicle_number, lr_number, boxes, tracking_url
-       FROM dispatches WHERE order_id = ? ORDER BY dispatch_date DESC`,
-      o.id,
-    ),
-  });
+/** Files are only reachable through their object, and only when that object allows it. */
+function publicFile(req) {
+  const o = loadPublicObject(req.params.publicId);
+  if (!o || o.deleted_at || o.status === 'archived') throw notFound('Object');
+  if (o.visibility === 'private') throw new HttpError(403, 'This object is private');
+  if (o.visibility === 'password' && !unlockValid(o.id, req.query.unlock)) throw new HttpError(401, 'Password required');
+  const file = objectFiles(o.id, { includePrivate: false }).find((f) => f.id === Number(req.params.fileId));
+  if (!file) throw notFound('Document');
+  const onDisk = filePath(file);
+  if (!fs.existsSync(onDisk)) throw notFound('Document');
+  return { object: o, file, onDisk };
+}
+
+/** The object's own photo, shown at the top of the scan page. */
+r.get('/objects/:publicId/image', (req, res, next) => {
+  try {
+    const o = loadPublicObject(req.params.publicId);
+    if (!o || o.deleted_at || !o.image_attachment_id) throw notFound('Image');
+    if (o.visibility === 'private') throw new HttpError(403, 'This object is private');
+    if (o.visibility === 'password' && !unlockValid(o.id, req.query.unlock)) throw new HttpError(401, 'Password required');
+    const a = get('SELECT * FROM attachments WHERE id = ?', o.image_attachment_id);
+    if (!a || !/^image\//.test(a.mime || '') || !fs.existsSync(filePath(a))) throw notFound('Image');
+    res.setHeader('Content-Type', a.mime);
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    fs.createReadStream(filePath(a)).pipe(res);
+  } catch (err) {
+    next(err);
+  }
+});
+
+r.get('/objects/:publicId/files/:fileId/raw', (req, res, next) => {
+  try {
+    const { file, onDisk } = publicFile(req);
+    const inline = /^(image\/(png|jpeg|gif|webp)|video\/(mp4|webm|quicktime)|application\/pdf)$/.test(file.mime || '') && !req.query.download;
+    res.setHeader('Content-Type', file.mime || 'application/octet-stream');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox");
+    res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(file.original_name)}`);
+    res.setHeader('Cache-Control', 'private, max-age=60');
+    fs.createReadStream(onDisk).pipe(res);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Parsed content for documents the browser cannot display itself (Excel, Word, CSV, text). */
+r.get('/objects/:publicId/files/:fileId/preview', (req, res, next) => {
+  try {
+    const { file, onDisk } = publicFile(req);
+    const kind = previewKind(file.mime, file.original_name);
+    try {
+      if (kind === 'sheet') return res.json({ kind, sheets: xlsxToSheets(fs.readFileSync(onDisk)) });
+      if (kind === 'csv') return res.json({ kind, sheets: [{ name: file.original_name, rows: csvToRows(fs.readFileSync(onDisk, 'utf8')) }] });
+      if (kind === 'doc') return res.json({ kind, ...docxToBlocks(fs.readFileSync(onDisk)) });
+      if (kind === 'text') return res.json({ kind, text: fs.readFileSync(onDisk, 'utf8').slice(0, 100000) });
+    } catch (err) {
+      return res.json({ kind: 'download', error: err.message });
+    }
+    return res.json({ kind });
+  } catch (err) {
+    return next(err);
+  }
 });
 
 export default r;
