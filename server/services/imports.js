@@ -50,7 +50,7 @@ export const TEMPLATES = {
       col('phone', 'Phone', '', '+971 50 123 4567'),
       col('email', 'Email', '', ''),
       col('received_date', 'Received date', 'Blank = unknown (kept unknown, not set to the import date)', '02/11/2026'),
-      col('source', 'Source', 'existing_customer, website, whatsapp, email, exhibition, field_visit, dealer_referral, outbound, other, unknown', 'exhibition'),
+      col('source', 'Source', 'existing_customer, whatsapp, email, exhibition, field_visit, dealer_referral, outbound, online_portal, tender, campaign, other, unknown', 'exhibition'),
       col('event', 'Event name', 'Exhibition or campaign name', 'Middle East Energy'),
       col('owner_email', 'Owner email', 'Accountable owner', 'name@veritekindia.com'),
       col('product_code', 'Product code', 'Product master code. Unknown codes are kept as requirement text', 'VIPS 70L'),

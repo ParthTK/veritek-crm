@@ -2,14 +2,15 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  ENQUIRY_STAGES, LINE_STATES, OUTCOMES, PHASES, COMM_STATES, REACTIVATION_STATUSES, QUOTE_STATUSES, APPROVAL_STATUSES, COUNTRIES, SEGMENTS, ROLES, DEPARTMENTS, labelOf, toneOf, TASK_PURPOSES,
+  ENQUIRY_STAGES, LINE_STATES, OUTCOMES, PHASES, COMM_STATES, DISPATCH_STATUSES, REACTIVATION_STATUSES, QUOTE_STATUSES, APPROVAL_STATUSES, COUNTRIES, SEGMENTS, ROLES, DEPARTMENTS, labelOf, toneOf, TASK_PURPOSES, dialFor,
 } from '@shared/constants.js';
 import { datePresets } from '@shared/dates.js';
+import { splitPhone, joinPhone, tidyPhoneNumber } from '@shared/rules.js';
 import { api, openFile, uploadFile } from '../api.js';
 import { useAuth } from '../auth.jsx';
 import { date, dateTime, relDay, setZone, todayLocal, fileSize, money } from '../lib/format.js';
 import Icon, { CHANNEL_ICON } from './Icon.jsx';
-import { Badge, Button, Combobox, Field, Input, Select, Spinner, useToast, Notice, Checkbox, Card } from './ui.jsx';
+import { Badge, Button, Combobox, Field, Input, Select, Spinner, useToast, Notice, Card } from './ui.jsx';
 
 // ------------------------------------------------------------------ reference data
 const MetaContext = createContext(null);
@@ -72,6 +73,42 @@ export function ProductSelect({ value, onChange, invalid, id, allowUnspecified =
 
 export function CountrySelect({ value, onChange, id }) {
   return <Select id={id} options={COUNTRIES} value={value} onChange={(e) => onChange(e.target.value || null)} placeholder="Unknown" />;
+}
+
+/**
+ * A phone number with its country code, saved together ("+91 98200 11111"). Until a code is chosen or a number
+ * is typed, the code follows the customer's country. "Other" is for a country not on the list: the whole number
+ * is typed with its + code.
+ */
+export function PhoneInput({ value, onChange, country, id, invalid }) {
+  const [picked, setPicked] = useState(null);
+  const { dial, number } = splitPhone(value);
+  const other = !dial && number.startsWith('+');
+  const code = other ? '' : dial || picked || dialFor(country) || dialFor('IN');
+  const pick = (next) => {
+    setPicked(next);
+    const digits = number.replace(/^\+\s*/, '');
+    if (!next) onChange(`+${digits}`);
+    else if (digits) onChange(joinPhone(next, digits));
+    else onChange('');
+  };
+  const tidy = () => {
+    const clean = tidyPhoneNumber(code, number);
+    if (clean !== number) onChange(joinPhone(code, clean));
+  };
+  return (
+    <div className="phone-input">
+      <label className="phone-code">
+        <span>{code ? `+${code}` : 'Other'}</span>
+        <Icon name="chevronDown" size={12} />
+        <select aria-label="Country code" value={code} onChange={(e) => pick(e.target.value)}>
+          {COUNTRIES.map((c) => <option key={c.value} value={c.dial}>+{c.dial} {c.label}</option>)}
+          <option value="">Other</option>
+        </select>
+      </label>
+      <Input id={id} invalid={invalid} inputMode="tel" autoComplete="tel" placeholder={other ? '+33 1 23 45 67 89' : '98200 11111'} value={number} onChange={(e) => onChange(joinPhone(code, e.target.value))} onBlur={tidy} onKeyDown={(e) => { if (e.key === 'Enter') tidy(); }} />
+    </div>
+  );
 }
 
 /** Date input with presets (Today, Next working day, +2 working days, +1 week…). */
@@ -172,6 +209,13 @@ export function PaymentBadge({ payment, size = 'sm' }) {
   return <Badge size={size} tone={payment.tone} title={payment.hold_reason || undefined}>{payment.label}</Badge>;
 }
 
+export function DispatchBadge({ dispatch: d }) {
+  if (d.status === 'posted') return d.delivered_at ? <Badge size="sm" tone="green">Delivered {date(d.delivered_at)}</Badge> : <Badge size="sm" tone="blue">In transit</Badge>;
+  return <Badge size="sm" tone={toneOf(DISPATCH_STATUSES, d.status)}>{labelOf(DISPATCH_STATUSES, d.status)}</Badge>;
+}
+
+export const transportText = (d) => [d.carrier, d.tracking_no && `LR ${d.tracking_no}`, d.vehicle_number].filter(Boolean).join(' · ');
+
 export function ReplyBadge({ replied, size = 'sm' }) {
   return <Badge size={size} tone={replied ? 'green' : 'red'}>{replied ? 'Replied' : 'Not replied'}</Badge>;
 }
@@ -261,7 +305,7 @@ export function CustomerPicker({ value, onChange, allowCreate = true, invalid, i
     const res = await api.get('/customers', { q, pageSize: 12 });
     return res.rows.map((c) => ({ value: c.id, label: c.company_name, sub: [c.code, c.city, c.country_code, c.primary_contact].filter(Boolean).join(' · '), row: c }));
   }, []);
-  const nc = newCustomer || { company_name: '', country_code: 'IN', city: '', contact_name: '', phone: '', email: '', provisional: false };
+  const nc = newCustomer || { company_name: '', country_code: 'IN', city: '', contact_name: '', phone: '', email: '' };
   const setNc = (patch) => onNewCustomer({ ...nc, ...patch });
   const timer = useRef(null);
   useEffect(() => {
@@ -281,13 +325,12 @@ export function CustomerPicker({ value, onChange, allowCreate = true, invalid, i
     return (
       <div className="stack-sm">
         <div className="form-grid">
-          <Field label="Company name" required className="full"><Input value={nc.company_name} onChange={(e) => setNc({ company_name: e.target.value })} placeholder="Registered or trading name" /></Field>
-          <Field label="Country"><CountrySelect value={nc.country_code} onChange={(v) => setNc({ country_code: v })} /></Field>
+          <Field label="Company name" required className="full"><Input value={nc.company_name} onChange={(e) => setNc({ company_name: e.target.value })} /></Field>
+          <Field label="Contact person" optional><Input value={nc.contact_name} onChange={(e) => setNc({ contact_name: e.target.value })} /></Field>
+          <Field label="Phone" hint="Phone or email is needed"><PhoneInput value={nc.phone} country={nc.country_code} onChange={(v) => setNc({ phone: v })} /></Field>
+          <Field label="Email"><Input value={nc.email} onChange={(e) => setNc({ email: e.target.value })} type="email" /></Field>
           <Field label="City" optional><Input value={nc.city} onChange={(e) => setNc({ city: e.target.value })} /></Field>
-          <Field label="Contact name" optional><Input value={nc.contact_name} onChange={(e) => setNc({ contact_name: e.target.value })} /></Field>
-          <Field label="Phone" hint="Phone or email is needed"><Input value={nc.phone} onChange={(e) => setNc({ phone: e.target.value })} inputMode="tel" /></Field>
-          <Field label="Email" className="full"><Input value={nc.email} onChange={(e) => setNc({ email: e.target.value })} type="email" /></Field>
-          <div className="full"><Checkbox label="Provisional record (company details still to be confirmed)" checked={nc.provisional} onChange={(v) => setNc({ provisional: v })} /></div>
+          <Field label="Country"><CountrySelect value={nc.country_code} onChange={(v) => setNc({ country_code: v })} /></Field>
         </div>
         {matches.length > 0 && (
           <div className="match-card" role="alert">
@@ -308,7 +351,7 @@ export function CustomerPicker({ value, onChange, allowCreate = true, invalid, i
   return (
     <div className="stack-xs">
       <Combobox id={id} value={value?.id} label={value?.company_name || ''} load={load} onChange={(o) => onChange({ id: o.value, company_name: o.label, row: o.row })}
-        placeholder="Search company, phone, email, order or PO…" invalid={invalid} minChars={2}
+        placeholder="Search customers…" invalid={invalid} minChars={2}
         renderEmpty={(q, close) => (allowCreate && q.length >= 2 ? (
           <div className="combo-opt" onMouseDown={(e) => { e.preventDefault(); close(); setCreating(true); onNewCustomer({ ...nc, company_name: q }); onChange(null); }}>
             <span><Icon name="plus" size={13} /> Add new company “{q}”</span>

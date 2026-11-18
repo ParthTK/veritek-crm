@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { ROLES, DEPARTMENTS, PERMISSIONS as P, PERMISSION_LABELS, CURRENCIES, TAG_COLORS, SEGMENTS, PRODUCT_FINDER_ROLES, PRODUCT_FINDER_WHATSAPP, labelOf, groupOf } from '@shared/constants.js';
+import { ROLES, V1_ROLES, DEPARTMENTS, PERMISSIONS as P, PERMISSION_LABELS, CURRENCIES, TAG_COLORS, SEGMENTS, PRODUCT_FINDER_ROLES, PRODUCT_FINDER_WHATSAPP, labelOf, groupOf } from '@shared/constants.js';
 import { finderPhoneProblem } from '@shared/rules.js';
 import { api, downloadAuthed, newKey } from '../api.js';
 import { useAuth } from '../auth.jsx';
@@ -12,25 +11,32 @@ import {
 import { UserSelect, useMeta } from '../components/domain.jsx';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+// The everyday dropdowns. The rest appear with the admin tools.
+const EVERYDAY_LISTS = ['enquiry_source', 'lost_reason', 'delay_reason', 'contact_outcome', 'cancel_reason', 'channel', 'unit'];
+const useAdminTools = () => Boolean(useMeta().settings.modules?.adminTools);
 
 export default function Settings() {
   const { can } = useAuth();
+  const admin = useAdminTools();
   const [f, setF] = useUrlFilters({ tab: 'people' });
+  const tabs = [
+    { key: 'people', label: 'People' }, { key: 'commercial', label: 'Company' }, { key: 'dropdowns', label: 'Dropdowns' }, { key: 'imports', label: 'Imports' },
+    admin && { key: 'masters', label: 'Regions, factories & rules' }, admin && { key: 'rules', label: 'Calendar & rules' }, admin && { key: 'system', label: 'System & backups' }, admin && can('audit.view') && { key: 'audit', label: 'Audit log' },
+  ].filter(Boolean);
+  // A link to a tab that is switched off (an old notification, say) opens People instead of an empty page.
+  const tab = tabs.some((t) => t.key === f.tab) ? f.tab : 'people';
   return (
     <div className="stack">
-      <PageHeader title="Settings" subtitle="People and access, company and commercial policy, master lists, dropdowns, reminder rules, imports and system health." />
-      <Tabs value={f.tab} onChange={(tab) => setF({ tab })} tabs={[
-        { key: 'people', label: 'People & access' }, { key: 'commercial', label: 'Company & commercial' }, { key: 'masters', label: 'Regions, factories & rules' }, { key: 'dropdowns', label: 'Dropdowns' },
-        { key: 'rules', label: 'Calendar & rules' }, { key: 'imports', label: 'Imports' }, { key: 'system', label: 'System & backups' }, can('audit.view') && { key: 'audit', label: 'Audit log' },
-      ]} />
-      {f.tab === 'people' && <People />}
-      {f.tab === 'dropdowns' && <Dropdowns />}
-      {f.tab === 'commercial' && <Commercial />}
-      {f.tab === 'masters' && <Masters />}
-      {f.tab === 'rules' && <Rules />}
-      {f.tab === 'imports' && <Imports />}
-      {f.tab === 'system' && <System />}
-      {f.tab === 'audit' && <Audit />}
+      <PageHeader title="Settings" />
+      <Tabs value={tab} onChange={(next) => setF({ tab: next })} tabs={tabs} />
+      {tab === 'people' && <People />}
+      {tab === 'dropdowns' && <Dropdowns />}
+      {tab === 'commercial' && <Commercial />}
+      {tab === 'imports' && <Imports />}
+      {tab === 'masters' && <Masters />}
+      {tab === 'rules' && <Rules />}
+      {tab === 'system' && <System />}
+      {tab === 'audit' && <Audit />}
     </div>
   );
 }
@@ -39,6 +45,7 @@ export default function Settings() {
 function People() {
   const { data, error, reload } = useApi('/admin/users');
   const meta = useMeta();
+  const admin = useAdminTools();
   const toast = useToast();
   const [modal, setModal] = useState(null);
   if (error) return <ErrorState error={error} onRetry={reload} />;
@@ -51,20 +58,15 @@ function People() {
   };
   return (
     <div className="stack">
-      <Notice tone="info">Each person has their own account — there is no shared login. Department heads who do not sign in can still be named owners of actions; the coordinator records updates on their behalf.</Notice>
       <Card flush title="People" actions={<Button variant="cta" icon="plus" onClick={() => setModal({ type: 'edit' })}>Add person</Button>}>
         <DataTable rows={data} columns={[
           { key: 'name', label: 'Name', render: (u) => <><strong>{u.name}</strong>{!u.active && <Badge size="sm"> Deactivated {date(u.deactivated_at)}</Badge>}<div className="sub">{u.email || 'no sign-in'}</div>{u.active && PRODUCT_FINDER_ROLES.includes(u.role) ? <FinderPhone phone={u.phone} /> : null}</> },
-          { key: 'role', label: 'Role', render: (u) => <>{labelOf(ROLES, u.role)}{u.values_access ? <div className="sub">may see commercial values</div> : null}</> },
-          { key: 'dept', label: 'Department', render: (u) => <>{labelOf(DEPARTMENTS, u.department) || '—'}{u.designation && <div className="sub">{u.designation}</div>}</> },
-          { key: 'where', label: 'Region / factory', render: (u) => u.region_name || u.factory_name || <span className="muted">—</span> },
-          { key: 'manager', label: 'Escalates to', render: (u) => u.manager_name || '—' },
-          { key: 'tasks', label: 'Open tasks', render: (u) => u.open_tasks },
+          { key: 'role', label: 'Role', render: (u) => labelOf(ROLES, u.role) },
           { key: 'login', label: 'Last sign-in', render: (u) => (u.login_enabled ? (u.last_login_at ? timeAgo(u.last_login_at) : 'never') : '—') },
           { key: 'act', label: '', render: (u) => <div className="row"><Button size="xs" onClick={() => setModal({ type: 'edit', user: u })}>Edit</Button>{u.active ? <Button size="xs" variant="danger-ghost" onClick={() => setModal({ type: 'deactivate', user: u })}>Deactivate</Button> : <Button size="xs" onClick={async () => { await api.post(`/admin/users/${u.id}/reactivate`); done('Reactivated'); }}>Reactivate</Button>}</div> },
         ]} />
       </Card>
-      <PermissionMatrix />
+      {admin && <PermissionMatrix />}
       <Modal open={modal?.type === 'edit'} onClose={() => setModal(null)} title={modal?.user ? `Edit ${modal.user.name}` : 'Add person'}>
         {modal?.type === 'edit' && <UserForm user={modal.user} people={data} onSaved={() => done('Saved')} />}
       </Modal>
@@ -86,24 +88,31 @@ function FinderPhone({ phone }) {
 function UserForm({ user, onSaved }) {
   const save = useSave();
   const meta = useMeta();
-  const [f, setF] = useState({ name: user?.name || '', email: user?.email || '', phone: user?.phone || '', role: user?.role || 'staff', department: user?.department || '', designation: user?.designation || '', region_id: user?.region_id ? String(user.region_id) : '', factory_id: user?.factory_id ? String(user.factory_id) : '', manager_id: user?.manager_id || null, values_access: Boolean(user?.values_access), password: '' });
-  const login = ROLES.find((r) => r.value === f.role)?.login;
+  const admin = useAdminTools();
+  const [f, setF] = useState({ name: user?.name || '', email: user?.email || '', phone: user?.phone || '', role: user?.role || 'sales_executive', department: user?.department || '', designation: user?.designation || '', region_id: user?.region_id ? String(user.region_id) : '', factory_id: user?.factory_id ? String(user.factory_id) : '', manager_id: user?.manager_id || null, values_access: Boolean(user?.values_access), password: '' });
+  const role = ROLES.find((r) => r.value === f.role);
+  const login = role?.login;
+  // Someone with an older role keeps it until it is changed.
+  const roles = admin ? ROLES : ROLES.filter((r) => V1_ROLES.includes(r.value) || r.value === user?.role);
+  const body = () => {
+    const main = { name: f.name, email: f.email, phone: f.phone, role: f.role };
+    return admin ? { ...main, department: f.department, designation: f.designation, manager_id: f.manager_id, values_access: f.values_access, region_id: f.region_id || null, factory_id: f.factory_id || null } : main;
+  };
   return (
-    <form className="stack-sm" onSubmit={(e) => { e.preventDefault(); save.run(async () => { const body = { ...f, region_id: f.region_id || null, factory_id: f.factory_id || null }; if (user) await api.put(`/admin/users/${user.id}`, { ...body, password: f.password || undefined }); else await api.post('/admin/users', body); onSaved(); }); }}>
+    <form className="stack-sm" onSubmit={(e) => { e.preventDefault(); save.run(async () => { if (user) await api.put(`/admin/users/${user.id}`, { ...body(), password: f.password || undefined }); else await api.post('/admin/users', { ...body(), password: f.password }); onSaved(); }); }}>
       <div className="form-grid">
         <Field label="Name" required error={save.fields.name}><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
-        <Field label="Role" error={save.fields.role}><Select value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })} options={ROLES} /></Field>
-        <Field label="Department"><Select value={f.department} onChange={(e) => setF({ ...f, department: e.target.value })} options={DEPARTMENTS} placeholder="—" /></Field>
-        <Field label="Designation" optional><Input value={f.designation} onChange={(e) => setF({ ...f, designation: e.target.value })} placeholder="e.g. Area Sales Manager — West" /></Field>
-        <Field label="Escalates to" hint="Overdue blocker actions escalate here"><UserSelect value={f.manager_id} onChange={(v) => setF({ ...f, manager_id: v })} /></Field>
-        <Field label="Sales region" required={f.role === 'regional_manager'} optional={f.role !== 'regional_manager'} error={save.fields.region_id} hint={f.role === 'regional_manager' ? 'They see customers in this region' : undefined}><Select value={f.region_id} onChange={(e) => setF({ ...f, region_id: e.target.value })} placeholder="None" options={meta.regions.map((r) => ({ value: String(r.id), label: r.name }))} /></Field>
-        <Field label="Factory" optional error={save.fields.factory_id} hint={groupOf(f.role) === 'production' ? 'Production and QC see orders for this factory' : undefined}><Select value={f.factory_id} onChange={(e) => setF({ ...f, factory_id: e.target.value })} placeholder="None" options={meta.factories.map((x) => ({ value: String(x.id), label: x.name }))} /></Field>
+        <Field label="Role" error={save.fields.role} hint={role?.description}><Select value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })} options={roles} /></Field>
         <Field label="Email" required={login} error={save.fields.email}><Input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
         <Field label="Phone" optional error={save.fields.phone} hint={PRODUCT_FINDER_ROLES.includes(f.role) ? `Their WhatsApp number, with country code, e.g. +91 98200 11111. From this number they get product files on ${PRODUCT_FINDER_WHATSAPP}.` : undefined}><Input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
-        {login && <Field label={user ? 'Reset password' : 'First password'} required={!user} error={save.fields.password} hint="They must change it at first sign-in" className="full"><Input type="password" autoComplete="new-password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} /></Field>}
-        {['production', 'service'].includes(groupOf(f.role)) && <div className="full"><Checkbox label="May see commercial values (prices and order values)" checked={f.values_access} onChange={(v) => setF({ ...f, values_access: v })} /></div>}
+        {login && <Field label={user ? 'New password' : 'First password'} required={!user} optional={Boolean(user)} error={save.fields.password} hint="They change it when they first sign in" className="full"><Input type="password" autoComplete="new-password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} /></Field>}
+        {admin && <Field label="Department"><Select value={f.department} onChange={(e) => setF({ ...f, department: e.target.value })} options={DEPARTMENTS} placeholder="—" /></Field>}
+        {admin && <Field label="Designation" optional><Input value={f.designation} onChange={(e) => setF({ ...f, designation: e.target.value })} /></Field>}
+        {admin && <Field label="Escalates to" hint="Overdue blocker actions escalate here"><UserSelect value={f.manager_id} onChange={(v) => setF({ ...f, manager_id: v })} /></Field>}
+        {admin && <Field label="Sales region" required={f.role === 'regional_manager'} optional={f.role !== 'regional_manager'} error={save.fields.region_id}><Select value={f.region_id} onChange={(e) => setF({ ...f, region_id: e.target.value })} placeholder="None" options={meta.regions.map((r) => ({ value: String(r.id), label: r.name }))} /></Field>}
+        {admin && <Field label="Factory" optional error={save.fields.factory_id}><Select value={f.factory_id} onChange={(e) => setF({ ...f, factory_id: e.target.value })} placeholder="None" options={meta.factories.map((x) => ({ value: String(x.id), label: x.name }))} /></Field>}
+        {admin && ['production', 'service'].includes(groupOf(f.role)) && <div className="full"><Checkbox label="May see prices and order values" checked={f.values_access} onChange={(v) => setF({ ...f, values_access: v })} /></div>}
       </div>
-      <div className="small muted">{ROLES.find((r) => r.value === f.role)?.description}</div>
       <div className="row between"><SaveStatus save={save} /><Button type="submit" variant="primary" loading={save.saving}>Save</Button></div>
     </form>
   );
@@ -160,13 +169,15 @@ const ROLE_PERMS = Object.fromEntries(ROLES.map((r) => [r.value, Object.keys(P).
 function Dropdowns() {
   const { data, error, reload } = useApi('/admin/dropdowns');
   const meta = useMeta();
+  const admin = useAdminTools();
   const toast = useToast();
-  const [cat, setCat] = useState('delay_reason');
+  const [cat, setCat] = useState('enquiry_source');
   const [label, setLabel] = useState('');
   const [note, setNote] = useState(false);
   if (error) return <ErrorState error={error} onRetry={reload} />;
   if (!data) return <Spinner />;
-  const current = data.find((d) => d.category === cat);
+  const lists = admin ? data : EVERYDAY_LISTS.map((c) => data.find((d) => d.category === c)).filter(Boolean);
+  const current = lists.find((d) => d.category === cat) || lists[0];
   const act = async (fn, msg) => {
     try {
       await fn();
@@ -179,29 +190,40 @@ function Dropdowns() {
   };
   return (
     <div className="split menu-left">
-      <Card flush><nav className="menu">{data.map((d) => <button key={d.category} type="button" onClick={() => setCat(d.category)} style={d.category === cat ? { background: 'var(--brand-soft)', color: 'var(--brand)', fontWeight: 650 } : undefined}>{d.label}</button>)}</nav></Card>
-      <Card title={current.label} sub="stable codes, editable labels — a used value is deactivated, never deleted">
+      <Card flush><nav className="menu">{lists.map((d) => <button key={d.category} type="button" onClick={() => setCat(d.category)} style={d.category === current.category ? { background: 'var(--brand-soft)', color: 'var(--brand)', fontWeight: 650 } : undefined}>{d.label}</button>)}</nav></Card>
+      <Card title={current.label}>
         <table className="table compact">
-          <thead><tr><th>Label</th><th>Code</th><th>Needs note</th><th>Used</th><th>Active</th><th /></tr></thead>
+          <thead><tr><th>Label</th>{admin && <th>Code</th>}{admin && <th>Needs note</th>}{admin && <th>Used</th>}<th>Active</th><th /></tr></thead>
           <tbody>{current.options.map((o) => (
             <tr key={o.id}>
-              <td><Input className="sm" defaultValue={o.label} onBlur={(e) => e.target.value !== o.label && act(() => api.put(`/admin/dropdown-options/${o.id}`, { label: e.target.value }), 'Label updated')} /></td>
-              <td className="mono">{o.code}</td>
-              <td><input type="checkbox" checked={Boolean(o.requires_note)} onChange={(e) => act(() => api.put(`/admin/dropdown-options/${o.id}`, { requires_note: e.target.checked }), 'Updated')} aria-label="Requires note" /></td>
-              <td>{o.used}</td>
+              <td><LabelEdit key={o.label} label={o.label} onSave={(label) => act(() => api.put(`/admin/dropdown-options/${o.id}`, { label }), 'Renamed')} /></td>
+              {admin && <td className="mono">{o.code}</td>}
+              {admin && <td><input type="checkbox" checked={Boolean(o.requires_note)} onChange={(e) => act(() => api.put(`/admin/dropdown-options/${o.id}`, { requires_note: e.target.checked }), 'Updated')} aria-label="Requires note" /></td>}
+              {admin && <td>{o.used}</td>}
               <td><input type="checkbox" checked={Boolean(o.active)} onChange={(e) => act(() => api.put(`/admin/dropdown-options/${o.id}`, { active: e.target.checked }), e.target.checked ? 'Activated' : 'Deactivated for new selections')} aria-label="Active" /></td>
               <td>{!o.used && !o.system && <Button size="xs" variant="danger-ghost" onClick={() => act(() => api.del(`/admin/dropdown-options/${o.id}`), 'Deleted')}>Delete</Button>}</td>
             </tr>
           ))}</tbody>
         </table>
-        <form className="row wrap mt-12" onSubmit={(e) => { e.preventDefault(); act(() => api.post(`/admin/dropdowns/${cat}`, { label, requires_note: note }), 'Value added').then(() => setLabel('')); }}>
-          <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="New value label" style={{ maxWidth: 280 }} />
-          <Checkbox label="Needs a note" checked={note} onChange={setNote} />
+        <form className="row wrap mt-12" onSubmit={(e) => { e.preventDefault(); act(() => api.post(`/admin/dropdowns/${current.category}`, { label, requires_note: note }), 'Added').then(() => setLabel('')); }}>
+          <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="New value" style={{ maxWidth: 280 }} />
+          {admin && <Checkbox label="Needs a note" checked={note} onChange={setNote} />}
           <Button type="submit" icon="plus" disabled={!label.trim()}>Add</Button>
         </form>
       </Card>
     </div>
   );
+}
+
+/** A dropdown value's label, saved when you leave the box or press Enter. An empty label puts the old one back. */
+function LabelEdit({ label, onSave }) {
+  const [value, setValue] = useState(label);
+  const commit = () => {
+    const next = value.trim();
+    if (!next) setValue(label);
+    else if (next !== label) onSave(next);
+  };
+  return <Input className="sm" aria-label="Label" value={value} onChange={(e) => setValue(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()} />;
 }
 
 // ------------------------------------------------------------------ company & commercial policy
@@ -222,38 +244,40 @@ function useSettingsSave(reload) {
 
 function Commercial() {
   const { data, error, reload } = useApi('/admin/settings');
+  const admin = useAdminTools();
   const saveSection = useSettingsSave(reload);
   if (error) return <ErrorState error={error} onRetry={reload} />;
   if (!data) return <Spinner />;
   return (
     <div className="grid grid-2">
-      <CompanyCard company={data.company} onSave={(b) => saveSection('company', b)} />
-      <ApprovalsCard approvals={data.approvals} onSave={(b) => saveSection('approvals', b)} />
-      <QuotationCard quotation={data.quotation} onSave={(b) => saveSection('quotation', b)} />
-      <RemindersCard reminders={data.reminders} onSave={(b) => saveSection('reminders', b)} />
-      <Card title="Products & price list"><div className="small muted">Models, prices, minimum price, cost, GST, configurator options and datasheets are managed on the Products page.</div><div className="mt-12"><Button to="/products" icon="products">Open products & prices</Button></div></Card>
+      <CompanyCard company={data.company} admin={admin} onSave={(b) => saveSection('company', b)} />
+      <QuotationCard quotation={data.quotation} admin={admin} onSave={(b) => saveSection('quotation', b)} />
+      {admin && <ApprovalsCard approvals={data.approvals} onSave={(b) => saveSection('approvals', b)} />}
+      {admin && <RemindersCard reminders={data.reminders} onSave={(b) => saveSection('reminders', b)} />}
     </div>
   );
 }
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-function CompanyCard({ company, onSave }) {
+function CompanyCard({ company, admin, onSave }) {
   const [f, setF] = useState(company);
   const set = (p) => setF((x) => ({ ...x, ...p }));
   return (
-    <Card title="Company profile" sub="printed on quotations and the customer pages">
+    <Card title="Company" sub="printed on quotations">
       <div className="form-grid">
         <Field label="Company name" className="full"><Input value={f.name || ''} onChange={(e) => set({ name: e.target.value })} /></Field>
-        <Field label="Short name"><Input value={f.short || ''} onChange={(e) => set({ short: e.target.value })} /></Field>
+        {admin && <Field label="Short name"><Input value={f.short || ''} onChange={(e) => set({ short: e.target.value })} /></Field>}
         <Field label="GSTIN"><Input value={f.gstin || ''} onChange={(e) => set({ gstin: e.target.value.toUpperCase() })} maxLength={15} /></Field>
         <Field label="Address" className="full"><Textarea rows={2} value={f.address || ''} onChange={(e) => set({ address: e.target.value })} /></Field>
         <Field label="Phone"><Input value={f.phone || ''} onChange={(e) => set({ phone: e.target.value })} /></Field>
         <Field label="Email"><Input value={f.email || ''} onChange={(e) => set({ email: e.target.value })} /></Field>
         <Field label="Website"><Input value={f.website || ''} onChange={(e) => set({ website: e.target.value })} /></Field>
-        <Field label="Reporting currency" hint="Targets and charts use it; other currencies are never converted"><Select value={f.currency || 'INR'} onChange={(e) => set({ currency: e.target.value })} options={CURRENCIES} /></Field>
-        <Field label="Financial year starts in"><Select value={String(f.fiscalYearStartMonth || 4)} onChange={(e) => set({ fiscalYearStartMonth: Number(e.target.value) })} options={MONTHS.map((m, i) => ({ value: String(i + 1), label: m }))} /></Field>
+        {admin && <>
+          <Field label="Reporting currency" hint="Targets and charts use it; other currencies are never converted"><Select value={f.currency || 'INR'} onChange={(e) => set({ currency: e.target.value })} options={CURRENCIES} /></Field>
+          <Field label="Financial year starts in"><Select value={String(f.fiscalYearStartMonth || 4)} onChange={(e) => set({ fiscalYearStartMonth: Number(e.target.value) })} options={MONTHS.map((m, i) => ({ value: String(i + 1), label: m }))} /></Field>
+        </>}
       </div>
-      <div className="mt-12"><Button variant="primary" onClick={() => onSave(f)}>Save company profile</Button></div>
+      <div className="mt-12"><Button variant="primary" onClick={() => onSave(f)}>Save</Button></div>
     </Card>
   );
 }
@@ -269,26 +293,29 @@ function ApprovalsCard({ approvals, onSave }) {
         <Field label="Minimum margin (%)" hint="Below it the sales head approves"><Input type="number" min={0} max={100} value={f.minMarginPct} onChange={(e) => set({ minMarginPct: e.target.value })} /></Field>
         <Field label="Below minimum selling price needs"><Select value={f.belowMinPriceRole || 'management'} onChange={(e) => set({ belowMinPriceRole: e.target.value })} options={['regional_manager', 'sales_head', 'management', 'super_admin'].map((r) => ({ value: r, label: labelOf(ROLES, r) }))} /></Field>
         <Field label="Large quotation (₹, incl. GST)" hint="Management and the sales head are told when one is issued"><Input type="number" min={0} value={f.largeQuotationValue ?? ''} onChange={(e) => set({ largeQuotationValue: e.target.value })} /></Field>
-        <div className="full"><Checkbox label="A quotation that needs approval cannot be issued until it is approved" checked={Boolean(f.requireBeforeIssue)} onChange={(v) => set({ requireBeforeIssue: v })} /></div>
+        <div className="full stack-xs">
+          <Checkbox label="Check discounts and margins before a quotation goes out" checked={Boolean(f.enabled)} onChange={(v) => set({ enabled: v })} />
+          <Checkbox label="A quotation that needs approval cannot be issued until it is approved" checked={Boolean(f.requireBeforeIssue)} onChange={(v) => set({ requireBeforeIssue: v })} />
+        </div>
       </div>
       <div className="mt-12"><Button variant="primary" onClick={() => onSave(f)}>Save approval policy</Button></div>
     </Card>
   );
 }
 
-function QuotationCard({ quotation, onSave }) {
+function QuotationCard({ quotation, admin, onSave }) {
   const [f, setF] = useState(quotation);
   const set = (p) => setF((x) => ({ ...x, ...p }));
   return (
-    <Card title="Quotation defaults" sub="pre-filled on every new quotation">
+    <Card title="Quotation defaults" sub="filled in on every new quotation">
       <div className="form-grid">
         <Field label="Validity (days)"><Input type="number" min={1} max={365} value={f.defaultValidityDays} onChange={(e) => set({ defaultValidityDays: e.target.value })} /></Field>
-        <Field label="GST on freight / installation (%)"><Input type="number" min={0} max={40} value={f.freightGstRate} onChange={(e) => set({ freightGstRate: e.target.value })} /></Field>
+        {admin && <Field label="GST on freight / installation (%)"><Input type="number" min={0} max={40} value={f.freightGstRate} onChange={(e) => set({ freightGstRate: e.target.value })} /></Field>}
         <Field label="Payment terms" className="full"><Input value={f.defaultPaymentTerms || ''} onChange={(e) => set({ defaultPaymentTerms: e.target.value })} /></Field>
         <Field label="Delivery" className="full"><Input value={f.defaultDelivery || ''} onChange={(e) => set({ defaultDelivery: e.target.value })} /></Field>
         <Field label="Warranty" className="full"><Input value={f.defaultWarranty || ''} onChange={(e) => set({ defaultWarranty: e.target.value })} /></Field>
       </div>
-      <div className="mt-12"><Button variant="primary" onClick={() => onSave(f)}>Save quotation defaults</Button></div>
+      <div className="mt-12"><Button variant="primary" onClick={() => onSave(f)}>Save</Button></div>
     </Card>
   );
 }
@@ -736,4 +763,3 @@ function Audit() {
   );
 }
 
-export { Link, Textarea };

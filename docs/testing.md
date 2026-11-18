@@ -18,7 +18,7 @@ One customer's complete path, checking each rule from the specification as it go
 | Stage | What is proven |
 |---|---|
 | Customer | Created with master fields; region inferred from the state; owner set; tags and interests saved; a duplicate company is flagged before creation |
-| Enquiry & pipeline | Capture with product, source and next action; follow-up due today; opportunity value, probability, temperature and decision date; weighted pipeline value |
+| Enquiry & pipeline | Capture with product, source and next action; follow-up due today; opportunity value, probability and decision date; weighted pipeline value |
 | Quotation | Configurator option priced from the product master; 12% discount routed to the regional manager; cost and margin hidden from the sales executive but visible to management; cannot issue before approval; the executive cannot approve; rejection needs a reason; issue moves the enquiry to *Quotation sent*; issued revisions are immutable |
 | Customer link | Opens without sign-in; never shows cost, margin or minimum price; records the view; revision request; revision 2 within policy needs no approval; revision 1 superseded but kept; online acceptance; accepted ≠ won |
 | Order | Conversion confirmed; a retried conversion returns the same order (idempotent); enquiry becomes Won; priority and advance carried over; factory and production owner assigned |
@@ -47,12 +47,16 @@ ALL 82 CHECKS PASSED
 ALL OBJECT CHECKS PASSED
 ```
 
-### Customer-to-dispatch flow (`tests/flow.mjs`, 57 checks)
+### Customer-to-dispatch flow (`tests/flow.mjs`, 92 checks)
 
 Customer first; exhibition, visitor and linked enquiry; replied / not replied; quotation pending, sent, approved
 and rejected; confirmation, advance, production and dispatch, with the sales pipeline, dashboard, order list and
 production board checked at each step; every stuck deal states a reason; scope and hidden values by role; QR
-data kept out of customer and order records.
+data kept out of customer and order records. Also the short new-customer form, phones saved with their country
+code, the editable source list, and every kind of move on the enquiry stage board: straight through, refused
+with the reason, or asking for a next action, review date or lost reason first. Payments recorded on the order:
+the order total matches the quotation total, the balance, Paid once it is covered, undoing a payment, and a new
+order without a quotation going from no payment to Part paid to Paid.
 
 ### People & access (`tests/people.mjs`)
 
@@ -62,7 +66,8 @@ Indian; 11–15 digits; several numbers separated by , ; / or "or"). Super admin
 not full numbers are refused on the phone field, the phone stays optional, other roles' phones are saved as
 typed, and promoting someone checks the phone they already have. The clean-installation test
 (`tests/baseline.mjs`) also checks that `users` keeps the phone, role and active columns the website reads, and
-that the website's query against them runs.
+that the website's query against them runs, that the modules kept for later versions start switched off, and
+that an administrator can switch one on.
 
 ### Endpoint sweep (`tests/sweep.mjs`)
 

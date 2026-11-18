@@ -1,40 +1,52 @@
-# Veritek CRM — customer, quotation and order control
+# Veritek CRM — customers, enquiries, quotations and orders
 
-The CRM for Veritek's panel-meter business: one record per customer, every enquiry tracked to a decision,
-quotations priced from the approved price list with discount and margin approvals, confirmed orders followed
-line by line through production, QC and dispatch, and the money and service that follow.
-
-Built to the *Veritek CRM Development Specification v1.0* (16 Nov 2026), and keeping every module of the
-earlier system (products & price list, quotation builder, campaigns, objects & QR codes, team targets,
-customer portal, production board, dispatches, payments and complaints).
+The CRM for Veritek's panel-meter business. Version 1 keeps to the daily work, from the first enquiry to the
+goods leaving the factory:
 
 ```
-Enquiry → Quotation (approval) → Customer link → Order → Production → QC → Dispatch → Invoice → Receipt → Service
+Customer → Enquiry → Quotation → Order → Payment → Production → Dispatch
 ```
 
-## Modules
+## Version 1
 
-| Area | What it does |
+| Page | What it does |
 |---|---|
-| **Overview & work queue** | Daily enquiries, replied / not replied, pending quotations, active orders, production status and delays, then the exceptions: overdue follow-ups, late or stale order lines, customers not informed, approvals waiting |
-| **Follow-ups** | One task list for every person; outcomes recorded in a few taps, the next action scheduled in the same step |
-| **Sales dashboard** | Enquiries, weighted pipeline, quotations, orders, receivables, target vs achievement, salespeople |
-| **Past customers** | Dormant buyers to reconnect with, with reasons and outcomes kept |
-| **Customers & contacts** | The starting point: unified profile (history, enquiries, quotations, orders, payments, complaints, exhibitions visited, deals in progress); duplicate checks and merge; regions, tags, interests, credit hold |
-| **Enquiries** | Added against a customer: details, notes, source, reply status, follow-ups and assigned person; list and stage board with a 30/60/90-day forecast |
-| **Quotations** | Builder priced from the product master (standard / dealer / distributor list), configurator options, discounts, GST, freight; approval routing; immutable revisions with comparison; issue evidence; customer link to accept or ask for changes; idempotent conversion to an order |
-| **Sales pipeline** | Every live deal across enquiry → quotation → confirmation → payment → production → dispatch, showing where it is, how long it has been there and why it is stuck |
-| **Exhibitions** | Exhibitions attended, customers visited and enquiries generated (Exhibition as a lead source is linked to the event), follow-up by salesperson, cost and return; also dealer meets and other events |
-| **Active orders** | Line-level quantities, production progress, payment status, original / forecast / agreed dates kept separately, delay reasons, customer communication, cancellations, amendments, payment holds |
-| **Production board** | Every active line by phase with blocker, forecast, payment status and freshness; QC passes recorded by Quality |
-| **Dispatches** | Planned and actual shipments, transport details, delivery and proof of delivery, customer notification, reversals |
-| **Payments** | Invoice register, receipts with TDS and deductions, credit notes, advances, ageing, promises, holds |
-| **Complaints & service** | Severity, warranty, site visits, root cause vs reported symptom, resolution, feedback rating, quality insights |
-| **Products & prices** | Price list with minimum price and cost, GST, warranty, lead time, configurator options, datasheets |
-| **QR module** | A separate module, not part of the sales flow: permanent QR codes for machines, panels and documents; public scan pages; labels; its own settings |
-| **Reports** | 24 defined reports with stated definitions, denominators and drill-down to the records; CSV export |
-| **Team & approvals** | Approval queue, monthly targets, performance shown with workload |
-| **Settings** | People and access, approval policy, quotation defaults, reminders, regions, factories, assignment rules, dropdowns, imports, backups, audit log |
+| **Dashboard** | Enquiries today, not replied, pending quotations, active orders, production and delays; daily enquiries; follow-ups due and delayed orders |
+| **Follow-ups** | Everyone's next actions: overdue, today, upcoming. Record what happened and set the next one in the same step |
+| **Customers** | A short new-customer form; one page per customer with its enquiries, quotations, orders, exhibitions visited, history, contacts and details |
+| **Enquiries** | Added against a customer: products, source, notes, reply status, follow-ups and who it is assigned to. A list, and a drag-and-drop board |
+| **Quotations** | Written from the product prices; pending, sent, approved or rejected; new versions; print / PDF. An approved quotation becomes an order |
+| **Sales pipeline** | Every live deal across enquiry → quotation → confirmation → payment → production → dispatch: where it is, and why it is stuck |
+| **Exhibitions** | Exhibitions attended, customers visited and the enquiries they brought. Exhibition as a source names the exhibition |
+| **Orders** | Each item's progress, dispatch date and delay; payments received against the order total; dispatches and delivery |
+| **Production** | Every active item by stage; one short form moves it along or records a delay |
+| **Dispatch** | What has left, the transporter and LR number, in transit or delivered |
+| **Products** | Codes, prices, GST, lead time and datasheets |
+| **Settings** | People and roles, company and quotation defaults, dropdown lists, imports |
+| **QR codes** | A separate module: permanent QR codes for machines, panels and documents, scan pages and labels |
+
+## Kept for later versions
+
+These parts are built and tested but switched off, so Version 1 stays simple. Their code and data are kept, and
+switching one on brings back its pages and reminders ([configuration.md](docs/configuration.md#modules)).
+
+| Module (setting) | What it adds |
+|---|---|
+| Work queue (`workQueue`) | The coordinator's list of new inputs, orders needing updates and missing information |
+| Sales dashboard (`salesDashboard`) | Pipeline value, conversion, and targets against achievement |
+| Contacts (`contacts`) | One list of every contact across customers |
+| Past customers (`pastCustomers`) | Buyers who have gone quiet, to reconnect with |
+| Payments register (`payments`) | Invoices, receipts with TDS and deductions, credit notes, ageing and payment promises |
+| Complaints (`complaints`) | Service complaints, site visits, root cause and feedback |
+| Reports (`reports`) | 24 reports with definitions and CSV export |
+| Team (`team`) | Quotation approvals, monthly targets and performance |
+| Admin tools (`adminTools`) | Regions, factories and assignment rules; calendar and reminder rules; backups and full export; audit log; every dropdown list; more person details and roles |
+
+Also off for now: checking discounts and margins before a quotation goes out (`approvals.enabled`), and naming
+the person who reported an update entered on someone else's behalf (`access.coordinatorMode`). Version 1 also
+has no buttons for price lists, product options and margin checks in the quotation builder, bulk order updates,
+planned dispatches, or the customer's own links (accepting a quotation online, following an order); links already
+sent keep working. Adding a person offers eight roles; anyone who already has another role keeps it.
 
 ## Quick start
 
@@ -63,7 +75,7 @@ npm run build && npm start   # http://localhost:4000
 | `npm run dev` | API with `--watch` plus the Vite dev server |
 | `npm run build` | Builds the React app into `client/dist` |
 | `npm start` | Serves the API and the built app on one port |
-| `npm test` | Builds a throwaway database with the tests' sample data and runs the acceptance journey (82 checks), the Objects & QR suite, the customer-to-dispatch flow (57 checks), the people checks and a sweep of every endpoint, then checks a clean installation; the throwaway database is deleted afterwards |
+| `npm test` | Builds a throwaway database with the tests' sample data and runs the acceptance journey (82 checks), the Objects & QR suite, the customer-to-dispatch flow (81 checks), the people checks and a sweep of every endpoint, then checks a clean installation; the throwaway database is deleted afterwards |
 | `npm run backup` | Backs up every table and the documents with a checksummed manifest |
 | `npm run restore-test` | Reads the latest backup back and reconciles records, files and quantities |
 | `npm run restore -- <backup>` | Restores a backup into an empty database |

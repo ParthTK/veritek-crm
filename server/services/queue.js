@@ -1,6 +1,6 @@
 // Coordinator work queue, the data-quality queue and global search.
 import { all, get } from '../db.js';
-import { now, today, likeTerm, normPhone, phoneKey, normName, optionLabel, intId, placeholders } from '../util.js';
+import { now, today, likeTerm, normPhone, phoneKey, normName, optionLabel, intId, placeholders, settings } from '../util.js';
 import { OPEN_ENQUIRY_STAGES } from '../../shared/constants.js';
 import { customerScope, enquiryScope, orderScope } from '../access.js';
 import { hasPerm } from '../auth.js';
@@ -148,7 +148,7 @@ export function globalSearch(q, user) {
       out.push({ type: 'Order', label: `${o.code} · ${o.company_name}`, sub: o.po_reference ? `PO ${o.po_reference}` : '', link: `/orders/${o.id}` });
     }
   }
-  if (hasPerm(user, 'complaints.view')) {
+  if (settings().modules.complaints && hasPerm(user, 'complaints.view')) {
     for (const k of all('SELECT k.id, k.code, c.company_name FROM complaints k JOIN customers c ON c.id = k.customer_id WHERE k.code LIKE ? LIMIT 4', like)) {
       out.push({ type: 'Complaint', label: `${k.code} · ${k.company_name}`, sub: '', link: `/complaints/${k.id}` });
     }

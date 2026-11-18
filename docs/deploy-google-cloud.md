@@ -101,7 +101,13 @@ values on a command line: generate them into Secret Manager through standard inp
 ## Updating
 
 Run the deploy command in step 6 from the repository. The schema is migrated automatically at start-up.
-Take a CRM backup first (Settings → System & backups → Back up now).
+Take a backup first: an on-demand Cloud SQL backup of the instance,
+
+```bash
+gcloud sql backups create --instance=veritek-db --description="Before CRM update"
+```
+
+or, with the admin tools switched on, Settings → System & backups → Back up now.
 
 ## Custom address
 

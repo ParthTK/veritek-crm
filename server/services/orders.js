@@ -10,7 +10,7 @@ import { isInstant, localDate, workingDaysBetween, addWorkingDays, isDate } from
 import {
   SELECTABLE_PHASES, WORK_STATUSES, PHASES, labelOf, COMMITMENT_STATES, PRIORITIES, DISPATCH_STATUSES,
 } from '../../shared/constants.js';
-import { orderFinance, paymentStatusByOrder } from './finance.js';
+import { orderFinance, orderTotalMinor, paymentStatusByOrder } from './finance.js';
 import {
   lineQty, lineStatus, orderSummary, isBackwardMove, isPositive, round3, toMinor, lineValueMinor,
 } from '../../shared/rules.js';
@@ -172,13 +172,11 @@ function headerExtras(c, input, customer) {
 
 /** Required advance = advance % × order value (when prices are known), unless an amount was entered. */
 function refreshAdvance(orderId) {
-  const o = get('SELECT advance_pct, advance_required_minor, freight_minor, installation_minor FROM orders WHERE id = ?', orderId);
+  const o = get('SELECT advance_pct, advance_required_minor, currency, freight_minor, installation_minor FROM orders WHERE id = ?', orderId);
   if (!o || o.advance_pct === null || o.advance_pct === undefined) return;
-  const lines = all('SELECT confirmed_qty, cancelled_qty, unit_price_minor, gst_rate FROM order_lines WHERE order_id = ?', orderId);
-  if (!lines.length || lines.some((l) => l.unit_price_minor === null)) return;
-  const taxable = lines.reduce((s, l) => s + lineValueMinor(round3(l.confirmed_qty - l.cancelled_qty), l.unit_price_minor), 0) + (o.freight_minor || 0) + (o.installation_minor || 0);
-  const tax = lines.reduce((s, l) => s + Math.round((lineValueMinor(round3(l.confirmed_qty - l.cancelled_qty), l.unit_price_minor) * (l.gst_rate || 0)) / 100), 0);
-  run('UPDATE orders SET advance_required_minor = ? WHERE id = ?', Math.round(((taxable + tax) * o.advance_pct) / 100), orderId);
+  const total = orderTotalMinor(o, all('SELECT confirmed_qty, cancelled_qty, unit_price_minor, gst_rate FROM order_lines WHERE order_id = ?', orderId));
+  if (total === null) return;
+  run('UPDATE orders SET advance_required_minor = ? WHERE id = ?', Math.round((total * o.advance_pct) / 100), orderId);
 }
 
 function checkDuplicatePo(customerId, po, excludeOrderId) {

@@ -9,7 +9,7 @@ import {
 } from '../util.js';
 import { CURRENCIES, PAYMENT_MODES } from '../../shared/constants.js';
 import { addDays, daysBetween } from '../../shared/dates.js';
-import { toMinor, lineValueMinor } from '../../shared/rules.js';
+import { toMinor, lineValueMinor, round3 } from '../../shared/rules.js';
 import { requireActiveUser } from './people.js';
 import { createTask } from './tasks.js';
 import { linkAttachment } from './attachments.js';
@@ -140,8 +140,23 @@ export function pendingAdvances(user) {
 }
 
 /**
+ * What the customer pays for an order, tax included, on the same basis as the quotation total. Cancelled
+ * quantity does not count. Null until every line has a price: an unknown price is never treated as zero.
+ */
+export function orderTotalMinor(order, lines) {
+  if (!lines.length || lines.some((l) => l.unit_price_minor === null)) return null;
+  const value = (l) => lineValueMinor(round3(l.confirmed_qty - l.cancelled_qty), l.unit_price_minor);
+  const goods = lines.reduce((s, l) => s + value(l), 0);
+  const tax = lines.reduce((s, l) => s + Math.round((value(l) * (l.gst_rate || 0)) / 100), 0);
+  const extras = (order.freight_minor || 0) + (order.installation_minor || 0);
+  const extrasTax = order.currency === 'INR' ? Math.round((extras * settings().quotation.freightGstRate) / 100) : 0;
+  return goods + tax + extras + extrasTax;
+}
+
+/**
  * One plain payment status per order, for order lists, the production board and the sales pipeline. The checks
  * run from most to least urgent. Amounts are in the order's currency and are hidden from roles without values.
+ * Payments are recorded against the order; once they cover its total it is Paid, with or without invoices.
  */
 export function paymentStatusByOrder(orderIds) {
   const out = new Map();
@@ -152,20 +167,25 @@ export function paymentStatusByOrder(orderIds) {
   const advances = new Map(all(`SELECT order_id, SUM(amount_minor + tds_minor + other_deduction_minor) AS n FROM receipts WHERE order_id IN (${ph}) AND kind = 'advance' AND reversed_at IS NULL GROUP BY order_id`, ids).map((r) => [r.order_id, r.n]));
   const holds = new Map(all(`SELECT order_id, reason FROM payment_holds WHERE order_id IN (${ph}) AND released_at IS NULL`, ids).map((h) => [h.order_id, h.reason]));
   const invoices = all(`SELECT i.order_id, i.gross_minor, i.due_date, ${OUTSTANDING()} AS outstanding_minor FROM invoices i WHERE i.order_id IN (${ph})`, ids);
-  for (const o of all(`SELECT id, currency, advance_required_minor FROM orders WHERE id IN (${ph})`, ids)) {
+  const lines = all(`SELECT order_id, confirmed_qty, cancelled_qty, unit_price_minor, gst_rate FROM order_lines WHERE order_id IN (${ph})`, ids);
+  const nothingYet = settings().modules.payments ? 'Not invoiced yet' : 'No payment yet';
+  for (const o of all(`SELECT id, currency, advance_required_minor, freight_minor, installation_minor FROM orders WHERE id IN (${ph})`, ids)) {
     const mine = invoices.filter((i) => i.order_id === o.id);
     const outstanding = mine.reduce((s, i) => s + Math.max(0, i.outstanding_minor), 0);
     const overdue = mine.some((i) => i.outstanding_minor > 0 && i.due_date && i.due_date < day);
     const required = o.advance_required_minor || 0;
     const received = advances.get(o.id) || 0;
-    let state = ['not_invoiced', 'Not invoiced yet', 'slate'];
+    const total = orderTotalMinor(o, lines.filter((l) => l.order_id === o.id));
+    let state = ['not_invoiced', nothingYet, 'slate'];
     if (holds.has(o.id)) state = ['on_hold', 'Payment hold', 'red'];
     else if (overdue) state = ['overdue', 'Payment overdue', 'red'];
-    else if (required > received && !mine.length) state = ['advance_pending', 'Advance pending', 'amber'];
     else if (mine.length) state = outstanding > 0 ? ['invoiced', 'Invoice unpaid', 'blue'] : ['paid', 'Paid', 'green'];
+    else if (total > 0 && received >= total) state = ['paid', 'Paid', 'green'];
+    else if (required > received) state = ['advance_pending', 'Advance pending', 'amber'];
     else if (required > 0) state = ['advance_received', 'Advance received', 'green'];
+    else if (received > 0) state = ['part_paid', 'Part paid', 'blue'];
     out.set(o.id, {
-      code: state[0], label: state[1], tone: state[2], hold_reason: holds.get(o.id) ?? null, currency: o.currency,
+      code: state[0], label: state[1], tone: state[2], hold_reason: holds.get(o.id) ?? null, currency: o.currency, total_minor: total,
       advance_required_minor: required, advance_received_minor: received, invoiced_minor: mine.reduce((s, i) => s + i.gross_minor, 0), outstanding_minor: outstanding,
     });
   }
@@ -179,14 +199,19 @@ export function orderFinance(orderId) {
   const lines = all('SELECT confirmed_qty, cancelled_qty, unit_price_minor, gst_rate FROM order_lines WHERE order_id = ?', orderId);
   const known = lines.every((l) => l.unit_price_minor !== null);
   const value = known ? lines.reduce((s, l) => s + lineValueMinor(l.confirmed_qty - l.cancelled_qty, l.unit_price_minor), 0) + (o.freight_minor || 0) + (o.installation_minor || 0) : null;
+  const total = orderTotalMinor(o, lines);
   const invoices = all(`SELECT i.id, i.invoice_ref, i.invoice_date, i.due_date, i.currency, i.gross_minor, i.advance_adjusted_minor, ${OUTSTANDING()} AS outstanding_minor FROM invoices i WHERE i.order_id = ? ORDER BY i.invoice_date`, orderId);
   const advance = get("SELECT COALESCE(SUM(amount_minor + tds_minor + other_deduction_minor), 0) AS n FROM receipts WHERE order_id = ? AND kind = 'advance' AND reversed_at IS NULL", orderId).n;
   const receipts = all(`SELECT r.*, i.invoice_ref FROM receipts r LEFT JOIN invoices i ON i.id = r.invoice_id
     WHERE (r.order_id = ? OR r.invoice_id IN (SELECT id FROM invoices WHERE order_id = ?)) ORDER BY r.effective_date, r.id`, orderId, orderId);
+  const received = receipts.filter((r) => !r.reversed_at && r.kind !== 'credit').reduce((s, r) => s + r.amount_minor + r.tds_minor + r.other_deduction_minor, 0);
   const hold = get('SELECT h.*, u.name AS authorised_by_name FROM payment_holds h LEFT JOIN users u ON u.id = h.authorised_by WHERE h.order_id = ? AND h.released_at IS NULL', orderId);
   return {
     currency: o.currency,
     value_minor: value,
+    total_minor: total,
+    received_minor: received,
+    balance_minor: total === null ? null : Math.max(0, total - received),
     advance_pct: o.advance_pct,
     advance_required_minor: o.advance_required_minor,
     advance_received_minor: advance,

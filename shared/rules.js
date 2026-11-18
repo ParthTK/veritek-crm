@@ -1,9 +1,39 @@
 // Pure business rules shared by the server (which enforces them) and the UI (which explains them).
 import { daysBetween } from './dates.js';
-import { PHASES } from './constants.js';
+import { PHASES, COUNTRIES } from './constants.js';
 
 export const round3 = (n) => Math.round((Number(n) || 0) * 1000) / 1000;
 const EPS = 0.0005;
+
+// ------------------------------------------------------------------ phone numbers with a country code
+const DIALS = COUNTRIES.map((c) => c.dial).sort((a, b) => b.length - a.length);
+
+/** "+91 98200 11111" → { dial: '91', number: '98200 11111' }. With no code, or one not listed, dial is null and the text stays whole. */
+export function splitPhone(value) {
+  const s = String(value ?? '').trimStart();
+  const dial = s.startsWith('+') ? DIALS.find((d) => s.startsWith(d, 1)) : null;
+  return dial ? { dial, number: s.slice(dial.length + 1).replace(/^[\s-]+/, '') } : { dial: null, number: s };
+}
+
+/** The text saved for a code and a number. A number typed or pasted with its own + or 00 keeps that code. */
+export function joinPhone(dial, number) {
+  const n = String(number ?? '').trimStart();
+  if (!n) return '';
+  if (n.startsWith('+')) return n;
+  if (n.startsWith('00')) return `+${n.slice(2)}`;
+  return dial ? `+${dial} ${n}` : n;
+}
+
+/** Tidies a finished number: no leading 0 and no repeat of the country code already chosen. */
+export function tidyPhoneNumber(dial, number) {
+  let n = String(number ?? '').trim();
+  if (n.startsWith('+')) return n;
+  n = n.replace(/^0+[\s-]*/, '');
+  const digits = n.replace(/\D/g, '');
+  // Nine more digits at least, so an Indian mobile that merely starts with 91 is left alone.
+  if (dial && digits.startsWith(dial) && digits.length >= dial.length + 9) n = n.replace(new RegExp(`^${[...dial].join('[\\s-]*')}[\\s-]*`), '');
+  return n;
+}
 
 // ------------------------------------------------------------------ WhatsApp numbers (website product finder)
 /**

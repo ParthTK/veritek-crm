@@ -1,5 +1,8 @@
 # Backup & restore
 
+In Version 1 the Settings pages named below (Calendar & rules, System & backups) are part of the admin tools,
+which are switched off ([configuration.md](configuration.md#modules)). The backups themselves still run.
+
 There are two independent layers of backup in production:
 
 1. **Google Cloud SQL automatic backups** of the whole database (daily, kept by Google; restored from the

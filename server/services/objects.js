@@ -4,8 +4,9 @@ import crypto from 'node:crypto';
 import { get, all, run, insert, update, tx } from '../db.js';
 import { getFile, fileExists } from '../storage.js';
 import { FIELD_TYPES, OBJECT_VISIBILITY } from '../../shared/constants.js';
+import { addDays, zonedToUtc } from '../../shared/dates.js';
 import {
-  badRequest, notFound, nowIso, today, str, intId, num, audit, parseJson, settings,
+  badRequest, notFound, nowIso, today, tz, str, intId, num, audit, parseJson, settings,
 } from '../util.js';
 import { hashPassword, verifyPassword } from '../auth.js';
 import { linkAttachment } from './attachments.js';
@@ -326,29 +327,34 @@ export function recordScan(objectId, req, source = 'qr') {
   run('UPDATE objects SET scan_count = scan_count + 1, last_scanned_at = ? WHERE id = ?', nowIso(), objectId);
 }
 
+// Scans are stored as UTC instants; every count is by the company's own calendar day.
+const scansSince = (daysAgo) => zonedToUtc(addDays(today(), -daysAgo), '00:00', tz());
+
+/** Scans per day for the last 30 days, oldest first, for one object or for all of them. */
+export function dailyScans(objectId = null) {
+  const rows = all(`SELECT to_char(scanned_at::timestamptz AT TIME ZONE ?, 'YYYY-MM-DD') AS day, COUNT(*) AS scans FROM scan_events
+    WHERE scanned_at >= ?${objectId ? ' AND object_id = ?' : ''} GROUP BY 1`, tz(), scansSince(29), ...(objectId ? [objectId] : []));
+  return Array.from({ length: 30 }, (_, i) => {
+    const day = addDays(today(), i - 29);
+    return { day, scans: rows.find((r) => r.day === day)?.scans || 0 };
+  });
+}
+
 export function scanStats(objectId) {
-  const t = today();
-  const day = (n) => `${new Date(Date.now() - n * 86400000).toISOString().slice(0, 10)}`;
   const stats = get(
     `SELECT COUNT(*) AS total,
-            SUM(CASE WHEN substr(scanned_at, 1, 10) = ? THEN 1 ELSE 0 END) AS today,
-            SUM(CASE WHEN substr(scanned_at, 1, 10) >= ? THEN 1 ELSE 0 END) AS last_7,
-            SUM(CASE WHEN substr(scanned_at, 1, 10) >= ? THEN 1 ELSE 0 END) AS last_30,
+            SUM(CASE WHEN scanned_at >= ? THEN 1 ELSE 0 END) AS today,
+            SUM(CASE WHEN scanned_at >= ? THEN 1 ELSE 0 END) AS last_7,
+            SUM(CASE WHEN scanned_at >= ? THEN 1 ELSE 0 END) AS last_30,
             MAX(scanned_at) AS last_scanned_at,
             SUM(CASE WHEN device_type = 'mobile' THEN 1 ELSE 0 END) AS mobile,
             SUM(CASE WHEN device_type = 'tablet' THEN 1 ELSE 0 END) AS tablet,
             SUM(CASE WHEN device_type = 'desktop' THEN 1 ELSE 0 END) AS desktop
      FROM scan_events WHERE object_id = ?`,
-    t, day(6), day(29), objectId,
+    scansSince(0), scansSince(6), scansSince(29), objectId,
   );
-  const daily = all(`SELECT substr(scanned_at, 1, 10) AS day, COUNT(*) AS scans FROM scan_events WHERE object_id = ? AND substr(scanned_at, 1, 10) >= ? GROUP BY 1 ORDER BY 1`, objectId, day(29));
-  const series = [];
-  for (let i = 29; i >= 0; i--) {
-    const d = day(i);
-    series.push({ day: d, scans: daily.find((x) => x.day === d)?.scans || 0 });
-  }
   const locations = all(`SELECT COALESCE(approximate_location, 'Unknown') AS location, COUNT(*) AS scans FROM scan_events WHERE object_id = ? GROUP BY 1 ORDER BY 2 DESC LIMIT 8`, objectId);
-  return { ...stats, series, locations };
+  return { ...stats, series: dailyScans(objectId), locations };
 }
 
 /** Objects whose stored file is missing on disk, and active objects without a code — the broken-link check. */

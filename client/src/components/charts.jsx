@@ -6,12 +6,15 @@ import { formatValue, compactMoney, number } from '../lib/format.js';
 
 export const seriesColor = (i) => `var(--series-${(i % 8) + 1})`;
 
-function niceScale(maxValue, ticks = 4) {
-  if (!(maxValue > 0)) return { max: 1, step: 0.25 };
+/** Axis top and step. Counts (format 'number') step in whole numbers: a scale of 0.3 enquiries means nothing. */
+function niceScale(maxValue, format, ticks = 4) {
+  const whole = format === 'number';
+  if (!(maxValue > 0)) return whole ? { max: 1, step: 1 } : { max: 1, step: 0.25 };
   const raw = maxValue / ticks;
   const mag = 10 ** Math.floor(Math.log10(raw));
   const f = raw / mag;
-  const step = (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * mag;
+  let step = (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * mag;
+  if (whole) step = Math.max(1, Math.ceil(step));
   return { max: Math.ceil(maxValue / step) * step, step };
 }
 
@@ -77,7 +80,7 @@ export function ColumnChart({ data = [], x, series, format, height = 240, stacke
   const plotH = height - margin.top - margin.bottom;
   const totals = data.map((d) => (stacked ? series.reduce((s, se) => s + (Number(d[se.key]) || 0), 0) : Math.max(0, ...series.map((se) => Number(d[se.key]) || 0))));
   const maxVal = Math.max(...totals, ...(target ? data.map((d) => Number(d[target.key]) || 0) : [0]));
-  const { max, step } = niceScale(maxVal);
+  const { max, step } = niceScale(maxVal, format);
   const yOf = (v) => margin.top + plotH - (v / max) * plotH;
   const band = data.length ? plotW / data.length : 0;
   const groupCount = stacked ? 1 : series.length;
@@ -229,7 +232,7 @@ export function LineChart({ data = [], x, series, format, height = 220, xFormat 
   const plotW = Math.max(0, width - margin.left - margin.right);
   const plotH = height - margin.top - margin.bottom;
   const maxVal = Math.max(0, ...data.flatMap((d) => series.map((s) => Number(d[s.key]) || 0)));
-  const { max, step } = niceScale(maxVal);
+  const { max, step } = niceScale(maxVal, format);
   const xOf = (i) => margin.left + (data.length <= 1 ? plotW / 2 : (i / (data.length - 1)) * plotW);
   const yOf = (v) => margin.top + plotH - ((Number(v) || 0) / max) * plotH;
   const labelEvery = Math.max(1, Math.ceil(data.length / Math.max(1, Math.floor(plotW / 58))));

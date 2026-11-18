@@ -53,7 +53,7 @@ automatically.
 | Customer name | ✓ | Used when there is no customer source ID | `Gulf Panel Co.` |
 | Contact name / Phone / Email | | | |
 | Received date | | Blank = unknown (not set to the import date) | `02/11/2026` |
-| Source | | `existing_customer, website, whatsapp, email, exhibition, field_visit, dealer_referral, outbound, other, unknown` | `exhibition` |
+| Source | | `existing_customer, whatsapp, email, exhibition, field_visit, dealer_referral, outbound, online_portal, tender, campaign, other, unknown` | `exhibition` |
 | Event name | | Exhibition or campaign name | `Middle East Energy` |
 | Owner email | | Accountable owner | `name@veritekindia.com` |
 | Product code | | Product master code; unknown codes are kept as requirement text | `VIPS 70L` |

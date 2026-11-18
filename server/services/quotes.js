@@ -204,8 +204,8 @@ export function computeQuote(lines, header = {}, currency = 'INR') {
       max_line_discount_pct: r2(maxLineDisc),
       below_min_price: belowMin ? 1 : 0,
     },
-    approval_role: role,
-    approval_reasons: reasons,
+    approval_role: cfg.enabled ? role : null,
+    approval_reasons: cfg.enabled ? reasons : [],
     large: currency === 'INR' && total !== null && total + tax >= (cfg.largeQuotationValue || Infinity) * 100,
   };
 }
@@ -493,7 +493,7 @@ export function listApprovals(query, user) {
 export function issueRevision(revisionId, input, user) {
   const r = loadRevision(revisionId);
   if (r.status !== 'draft') throw conflict('This revision has already been issued');
-  if (r.approval_role && settings().approvals.requireBeforeIssue && r.approval_status !== 'approved') {
+  if (settings().approvals.enabled && r.approval_role && settings().approvals.requireBeforeIssue && r.approval_status !== 'approved') {
     throw conflict(r.approval_status === 'pending' ? 'This revision is awaiting internal approval' : `This revision needs approval before it is issued: ${r.approval_reasons.join('; ')}`, { code: 'approval_required' });
   }
   const c = new Check();

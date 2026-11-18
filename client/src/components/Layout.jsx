@@ -9,41 +9,38 @@ import { Avatar, Button, Logo, Popover } from './ui.jsx';
 import { useMeta } from './domain.jsx';
 import { useQuickEntry } from './QuickEntry.jsx';
 
+// Items with a `module` appear only while that module is switched on (Settings data: modules).
 const NAV = [
   { group: null, items: [
-    { to: '/', label: 'Overview', icon: 'home', perm: 'dashboard.view', end: true },
-    { to: '/queue', label: 'Work queue', icon: 'queue', perm: 'queue.view', badge: 'queue' },
+    { to: '/', label: 'Dashboard', icon: 'home', perm: 'dashboard.view', end: true },
     { to: '/followups', label: 'Follow-ups', icon: 'calendar', perm: 'tasks.edit', badge: 'followups' },
-    { to: '/analytics', label: 'Sales dashboard', icon: 'dashboard', perm: 'analytics.view' },
+    { to: '/queue', label: 'Work queue', icon: 'queue', perm: 'queue.view', badge: 'queue', module: 'workQueue' },
+    { to: '/analytics', label: 'Sales dashboard', icon: 'dashboard', perm: 'analytics.view', module: 'salesDashboard' },
   ] },
-  { group: 'Customers & sales', items: [
+  { group: 'Sales', items: [
     { to: '/customers', label: 'Customers', icon: 'users', perm: 'customers.view' },
-    { to: '/contacts', label: 'Contacts', icon: 'contacts', perm: 'customers.view' },
+    { to: '/contacts', label: 'Contacts', icon: 'contacts', perm: 'customers.view', module: 'contacts' },
     { to: '/enquiries', label: 'Enquiries', icon: 'inbox', perm: 'enquiries.view' },
     { to: '/quotations', label: 'Quotations', icon: 'quotation', perm: 'quotes.view' },
     { to: '/pipeline', label: 'Sales pipeline', icon: 'pipeline', perm: ['enquiries.view', 'orders.view'] },
     { to: '/campaigns', label: 'Exhibitions', icon: 'campaigns', perm: 'campaigns.view' },
-    { to: '/past-customers', label: 'Past customers', icon: 'history', perm: 'past.view' },
+    { to: '/past-customers', label: 'Past customers', icon: 'history', perm: 'past.view', module: 'pastCustomers' },
   ] },
-  { group: 'Production & dispatch', items: [
-    { to: '/orders', label: 'Active orders', icon: 'box', perm: 'orders.view' },
-    { to: '/production', label: 'Production board', icon: 'factory', perm: 'orders.view' },
-    { to: '/dispatches', label: 'Dispatches', icon: 'truck', perm: 'orders.view' },
+  { group: 'Orders', items: [
+    { to: '/orders', label: 'Orders', icon: 'box', perm: 'orders.view' },
+    { to: '/production', label: 'Production', icon: 'factory', perm: 'orders.view' },
+    { to: '/dispatches', label: 'Dispatch', icon: 'truck', perm: 'orders.view' },
+    { to: '/payments', label: 'Payments', icon: 'payment', perm: 'finance.view', module: 'payments' },
+    { to: '/complaints', label: 'Complaints', icon: 'wrench', perm: 'complaints.view', module: 'complaints' },
   ] },
-  { group: 'Money & service', items: [
-    { to: '/payments', label: 'Payments', icon: 'payment', perm: 'finance.view' },
-    { to: '/complaints', label: 'Complaints', icon: 'wrench', perm: 'complaints.view' },
-  ] },
-  { group: 'Catalogue', items: [
-    { to: '/products', label: 'Products & prices', icon: 'products', perm: 'products.view' },
-  ] },
-  { group: 'Management', items: [
-    { to: '/reports', label: 'Reports', icon: 'chart', perm: 'reports.view' },
-    { to: '/team', label: 'Team & approvals', icon: 'team', perm: ['team.view', 'quotes.approve'], badge: 'approvals' },
+  { group: 'Setup', items: [
+    { to: '/products', label: 'Products', icon: 'products', perm: 'products.view' },
+    { to: '/reports', label: 'Reports', icon: 'chart', perm: 'reports.view', module: 'reports' },
+    { to: '/team', label: 'Team & approvals', icon: 'team', perm: ['team.view', 'quotes.approve'], badge: 'approvals', module: 'team' },
     { to: '/settings', label: 'Settings', icon: 'settings', perm: 'settings.manage' },
   ] },
-  { group: 'QR module', items: [
-    { to: '/objects', label: 'Objects & QR codes', icon: 'qr', perm: 'objects.view' },
+  { group: 'QR', items: [
+    { to: '/objects', label: 'QR codes', icon: 'qr', perm: 'objects.view' },
   ] },
 ];
 
@@ -85,7 +82,7 @@ function GlobalSearch() {
   return (
     <div className="search" ref={ref}>
       <Icon name="search" size={16} />
-      <input value={q} placeholder="Company, phone, email, enquiry, order or PO…  (Ctrl+K)" aria-label="Search everything"
+      <input value={q} placeholder="Search customers, enquiries, orders…" aria-label="Search everything"
         onFocus={() => setOpen(true)} onChange={(e) => { setQ(e.target.value); setOpen(true); }}
         onKeyDown={(e) => {
           if (e.key === 'ArrowDown') setHl((h) => Math.min(results.length - 1, h + 1));
@@ -182,7 +179,7 @@ export default function Layout({ children }) {
     const load = () => {
       api.get('/notifications', { unread: 1, limit: 1 }).then((r) => setCounts((c) => ({ ...c, unread: r.unread }))).catch(() => {});
       if (can('tasks.edit')) api.get('/tasks', { owner: 'me', bucket: 'overdue', limit: 1 }).then((r) => setCounts((c) => ({ ...c, followups: (r.counts.overdue || 0) + (r.counts.today || 0) }))).catch(() => {});
-      if (can('quotes.approve')) api.get('/approvals', { status: 'pending' }).then((rows) => setCounts((c) => ({ ...c, approvals: rows.filter((a) => a.can_decide).length }))).catch(() => {});
+      if (meta.settings.modules?.team && can('quotes.approve')) api.get('/approvals', { status: 'pending' }).then((rows) => setCounts((c) => ({ ...c, approvals: rows.filter((a) => a.can_decide).length }))).catch(() => {});
     };
     load();
     const t = setInterval(load, 60000);
@@ -194,7 +191,6 @@ export default function Layout({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
 
-  const canQuick = can('enquiries.edit', 'tasks.edit', 'orders.update', 'dispatch.post');
   return (
     <div className={`app ${navOpen ? 'nav-open' : ''}`}>
       {navOpen && <div className="scrim" onClick={() => setNavOpen(false)} />}
@@ -204,7 +200,7 @@ export default function Layout({ children }) {
         </Link>
         <nav className="nav">
           {NAV.map((section) => {
-            const items = section.items.filter((i) => can(...[].concat(i.perm)));
+            const items = section.items.filter((i) => can(...[].concat(i.perm)) && (!i.module || meta.settings.modules?.[i.module]));
             if (!items.length) return null;
             return (
               <div key={section.group || 'main'} style={{ display: 'contents' }}>
@@ -221,8 +217,7 @@ export default function Layout({ children }) {
           })}
         </nav>
         <div className="sidebar-foot">
-          {meta.env !== 'production' && <div style={{ marginBottom: 6 }}><span className="env-badge">{meta.env}</span></div>}
-          Times shown in {meta.timezone}
+          {meta.env !== 'production' && <span className="env-badge">{meta.env}</span>}
         </div>
       </aside>
       <div className="main">
@@ -230,7 +225,7 @@ export default function Layout({ children }) {
           <button type="button" className="btn ghost icon menu-btn" onClick={() => setNavOpen(true)} aria-label="Open menu"><Icon name="menu" /></button>
           <GlobalSearch />
           <div className="grow" />
-          {canQuick && <Button variant="cta" icon="plus" onClick={() => quick.open()}><span className="hide-mobile">Quick entry</span></Button>}
+          {can('enquiries.edit') && <Button variant="cta" icon="plus" onClick={() => quick.open()}><span className="hide-mobile">New enquiry</span></Button>}
           <Notifications unread={counts.unread} onChange={(n) => setCounts((c) => ({ ...c, unread: n }))} />
           <Popover trigger={({ toggle }) => (
             <button type="button" className="btn ghost" onClick={toggle} style={{ height: 42 }} aria-label="Account menu">

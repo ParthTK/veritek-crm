@@ -95,15 +95,15 @@ for (const p of allProducts.filter((x) => x.option_count > 0 && x.price_currency
 }
 log(Boolean(pick), 'found a catalogue product with a configurator option', pick ? `${pick.p.code} + ${pick.o.name}` : 'none');
 const enq = await exec.post('/enquiries', {
-  customer_id: customerId, contact_id: contactId, lines: [{ product_id: pick.p.id, qty: 10, unit: pick.p.default_unit || 'pcs' }], source_code: 'website',
+  customer_id: customerId, contact_id: contactId, lines: [{ product_id: pick.p.id, qty: 10, unit: pick.p.default_unit || 'pcs' }], source_code: 'email',
   owner_id: exec.user.id, next: { purpose: 'Respond to enquiry', owner_id: exec.user.id, due_date: today },
 }, `journey-enq-${stamp}`);
 log(enq.status === 201, 'enquiry captured with a product, source and next action', enq.data?.error);
 const enquiryId = enq.data.id;
 const enquiry = (await exec.get(`/enquiries/${enquiryId}`)).data;
 log(enquiry.enquiry.stage === 'new' && enquiry.tasks.some((t) => t.status === 'open' && t.due_date === today), 'new enquiry has an open follow-up due today');
-const opp = await exec.put(`/enquiries/${enquiryId}`, { version: enquiry.enquiry.version, est_value: '150000', est_currency: 'INR', probability: 40, temperature: 'hot', expected_decision_date: addDays(20) });
-log(opp.status === 200, 'opportunity value, probability, temperature and decision date saved', opp.data?.error);
+const opp = await exec.put(`/enquiries/${enquiryId}`, { version: enquiry.enquiry.version, est_value: '150000', est_currency: 'INR', probability: 40, expected_decision_date: addDays(20) });
+log(opp.status === 200, 'opportunity value, probability and decision date saved', opp.data?.error);
 const board = (await exec.get('/enquiries/pipeline')).data;
 const card = board.columns.flatMap((c) => c.cards).find((c) => c.id === enquiryId);
 log(card && card.value_minor === 15000000 && card.weighted_minor === 6000000, 'pipeline shows the estimate weighted by probability', card ? `${card.value_minor}/${card.weighted_minor}` : 'missing');

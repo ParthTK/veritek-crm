@@ -29,7 +29,7 @@ export function ensureDropdownDefaults() {
 }
 
 const USAGE = {
-  enquiry_source: ['SELECT COUNT(*) AS n FROM enquiries WHERE source_code = ?'],
+  enquiry_source: ['SELECT COUNT(*) AS n FROM enquiries WHERE source_code = ?', 'SELECT COUNT(*) AS n FROM customers WHERE acquisition_source = ?'],
   lost_reason: ['SELECT COUNT(*) AS n FROM enquiries WHERE lost_reason_code = ?', 'SELECT COUNT(*) AS n FROM enquiry_lines WHERE lost_reason_code = ?', 'SELECT COUNT(*) AS n FROM reactivation_cases WHERE reason_code = ?', 'SELECT COUNT(*) AS n FROM quote_revisions WHERE rejection_reason_code = ?'],
   enquiry_cancel_reason: ['SELECT COUNT(*) AS n FROM enquiries WHERE cancel_reason_code = ?'],
   contact_outcome: ['SELECT COUNT(*) AS n FROM activities WHERE outcome = ?'],
@@ -319,7 +319,11 @@ export function updateSettings(section, input, user) {
       if (!Number.isInteger(m) || m < 1 || m > 12) c.fail('fiscalYearStartMonth', 'Choose a month');
       else next.fiscalYearStartMonth = m;
     }
+  } else if (section === 'modules') {
+    // The parts of the CRM kept for later versions. Switching one on brings back its pages and reminders.
+    for (const k of Object.keys(DEFAULT_SETTINGS.modules)) if (input[k] !== undefined) next[k] = bool(input[k]);
   } else if (section === 'approvals') {
+    if (input.enabled !== undefined) next.enabled = bool(input.enabled);
     for (const k of ['discountManagerPct', 'discountHeadPct', 'minMarginPct']) {
       if (input[k] === undefined) continue;
       const n = Number(input[k]);

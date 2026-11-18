@@ -8,7 +8,7 @@ import { compactMoney, date } from '../lib/format.js';
 import {
   Badge, Button, Card, Chips, DataTable, Drawer, EmptyState, ErrorState, Facts, PageHeader, SearchBox, Segmented, Select, Spinner,
 } from '../components/ui.jsx';
-import { DealReasons, PaymentBadge, SalesJourney, useMeta, usePeople } from '../components/domain.jsx';
+import { DealReasons, PaymentBadge, SalesJourney, usePeople } from '../components/domain.jsx';
 
 const TONE = { red: 'red', amber: 'amber' };
 
@@ -44,7 +44,7 @@ export function DealDrawer({ deal, onClose }) {
         </Card>
         <Card title="Details">
           <Facts items={[
-            ['Owner', deal.owner_name],
+            ['Assigned to', deal.owner_name],
             ['Next action', deal.next_action ? `${deal.next_action.purpose} · ${date(deal.next_action.due_date)}${deal.next_action.owner_name ? ` · ${deal.next_action.owner_name}` : ''}` : 'None planned'],
             ['Source', deal.exhibition ? <Link to={`/campaigns/${deal.exhibition.id}`}>{deal.exhibition.name}</Link> : deal.source_label],
             ['Payment', deal.payment ? <PaymentBadge payment={deal.payment} /> : null],
@@ -63,18 +63,16 @@ export function DealDrawer({ deal, onClose }) {
 }
 
 export default function Pipeline() {
-  const meta = useMeta();
   const people = usePeople({ activeOnly: false });
   const [f, setF] = useUrlFilters({ view: 'board' });
-  const { data, error, loading, reload } = useApi('/pipeline', { q: f.q, owner: f.owner, campaign_id: f.campaign_id, stage: f.stage, stuck: f.stuck });
+  const { data, error, loading, reload } = useApi('/pipeline', { q: f.q, owner: f.owner, stage: f.stage, stuck: f.stuck });
   const [open, setOpen] = useState(null);
   if (error) return <ErrorState error={error} onRetry={reload} />;
   const stages = data?.stages || [];
   const shownStages = stages.filter((s) => !f.stage || s.value === f.stage);
-  const exhibitions = meta.campaigns.filter((c) => c.type === 'exhibition');
   return (
     <div className="stack">
-      <PageHeader title="Sales pipeline" subtitle={data ? `${data.total} live deal${data.total === 1 ? '' : 's'} from enquiry to dispatch · ${data.stuck} stuck` : 'Loading…'}
+      <PageHeader title="Sales pipeline" subtitle={data ? `${data.total} live · ${data.stuck} stuck` : 'Loading…'}
         actions={<Segmented label="View" value={f.view} onChange={(v) => setF({ view: v })} options={[{ value: 'board', label: 'Board' }, { value: 'list', label: 'List' }]} />} />
       <div className="stage-strip" role="group" aria-label="Journey stages">
         {stages.map((s) => (
@@ -86,15 +84,14 @@ export default function Pipeline() {
         ))}
       </div>
       <div className="filter-bar">
-        <SearchBox value={f.q} onChange={(v) => setF({ q: v })} placeholder="Customer, enquiry, quotation, order, product…" />
-        <Select aria-label="Owner" value={f.owner || ''} onChange={(e) => setF({ owner: e.target.value })} placeholder="All owners" options={people.map((p) => ({ value: String(p.id), label: p.name }))} />
-        {exhibitions.length > 0 && <Select aria-label="Exhibition" value={f.campaign_id || ''} onChange={(e) => setF({ campaign_id: e.target.value })} placeholder="Any exhibition" options={exhibitions.map((c) => ({ value: String(c.id), label: c.name }))} />}
-        <Chips value={f.stuck || ''} onChange={(v) => setF({ stuck: v })} options={[{ value: '', label: 'All deals' }, { value: '1', label: 'Stuck only', tone: 'red' }]} />
+        <SearchBox value={f.q} onChange={(v) => setF({ q: v })} placeholder="Customer…" />
+        <Select aria-label="Assigned to" value={f.owner || ''} onChange={(e) => setF({ owner: e.target.value })} placeholder="Everyone" options={people.map((p) => ({ value: String(p.id), label: p.name }))} />
+        <Chips value={f.stuck || ''} onChange={(v) => setF({ stuck: v })} options={[{ value: '', label: 'All' }, { value: '1', label: 'Stuck', tone: 'red' }]} />
       </div>
       {!data && loading && <Spinner />}
       {data && !data.count && (
         <EmptyState icon="pipeline" title={data.total ? 'No deals match these filters' : 'Nothing in the pipeline yet'}
-          message={data.total ? 'Clear a filter to see more.' : 'Add a customer, then an enquiry. It appears here and moves along as the quotation, order, payment, production and dispatch are recorded.'}
+          message={data.total ? 'Clear a filter to see more.' : 'Add a customer, then an enquiry. It moves along here by itself.'}
           action={!data.total && <Button variant="primary" icon="users" to="/customers">Go to customers</Button>} />
       )}
       {data && data.count > 0 && f.view === 'board' && (
@@ -118,11 +115,11 @@ export default function Pipeline() {
           <DataTable rows={data.items} rowKey="key" onRowClick={setOpen} columns={[
             { key: 'c', label: 'Customer', render: (d) => <><strong>{d.customer_name}</strong><div className="sub">{d.code} · {d.title}</div></> },
             { key: 'st', label: 'Stage', render: (d) => <span className="stack-xs"><span className="small strong">{d.stage_label}</span><StuckBadge deal={d} /></span> },
-            { key: 'why', label: 'Where it is stuck and why', render: (d) => (d.reasons.length ? <DealReasons deal={d} limit={2} /> : <span className="muted small">Nothing blocking</span>) },
+            { key: 'why', label: 'Why it is stuck', render: (d) => (d.reasons.length ? <DealReasons deal={d} limit={2} /> : <span className="muted small">Nothing blocking</span>) },
             { key: 'days', label: 'Days here', align: 'num', render: (d) => d.days_in_stage },
             { key: 'pay', label: 'Payment', render: (d) => <PaymentBadge payment={d.payment} /> },
             { key: 'next', label: 'Next action', render: (d) => (d.next_action ? <span className="small">{d.next_action.purpose}<div className="tiny muted">{date(d.next_action.due_date)}</div></span> : <span className="muted small">None</span>) },
-            { key: 'o', label: 'Owner', render: (d) => <span className="small">{d.owner_name}</span> },
+            { key: 'o', label: 'Assigned to', render: (d) => <span className="small">{d.owner_name}</span> },
           ]} />
         </Card>
       )}

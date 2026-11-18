@@ -20,8 +20,8 @@ r.get('/meta', h((req) => {
     today: today(),
     timezone: tz(),
     settings: {
-      company: s.company, calendar: s.calendar, rules: s.rules, reminders: s.reminders, quotation: s.quotation, objects: s.objects,
-      approvals: { discountManagerPct: s.approvals.discountManagerPct, discountHeadPct: s.approvals.discountHeadPct, minMarginPct: s.approvals.minMarginPct, requireBeforeIssue: s.approvals.requireBeforeIssue },
+      modules: s.modules, company: s.company, calendar: s.calendar, rules: s.rules, reminders: s.reminders, quotation: s.quotation, objects: s.objects,
+      approvals: { enabled: s.approvals.enabled, discountManagerPct: s.approvals.discountManagerPct, discountHeadPct: s.approvals.discountHeadPct, minMarginPct: s.approvals.minMarginPct, requireBeforeIssue: s.approvals.requireBeforeIssue },
       access: { salesScope: s.access.salesScope, coordinatorMode: s.access.coordinatorMode, dncPolicy: s.access.dncPolicy, autoAssignEnquiries: s.access.autoAssignEnquiries }, finance: s.finance,
     },
     dropdowns: Object.fromEntries(Object.entries(dropdowns()).map(([k, v]) => [k, v.map((o) => ({ code: o.code, label: o.label, active: Boolean(o.active), requires_note: Boolean(o.requires_note) }))])),

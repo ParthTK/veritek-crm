@@ -5,7 +5,7 @@ import {
   nextCode, audit, history, diff, likeTerm, placeholders, normPhone, normEmail,
 } from '../util.js';
 import { addWorkingDays, isInstant, localDate, addDays, daysBetween } from '../../shared/dates.js';
-import { ENQUIRY_STAGES, OPEN_ENQUIRY_STAGES, PIPELINE_STAGES, TEMPERATURES, CURRENCIES, labelOf } from '../../shared/constants.js';
+import { ENQUIRY_STAGES, OPEN_ENQUIRY_STAGES, PIPELINE_STAGES, CURRENCIES, labelOf } from '../../shared/constants.js';
 import { round3, toMinor } from '../../shared/rules.js';
 import { enquiryScope, assertCustomer } from '../access.js';
 import { requireActiveUser } from './people.js';
@@ -63,7 +63,7 @@ export function missingDetails(e, lines, customer, contact) {
 // ------------------------------------------------------------------ opportunity details & ownership
 /**
  * Optional opportunity details carried over from the lead pipeline: title, campaign, estimated value (with
- * its currency), probability, temperature and expected decision date. None of them blocks a fast capture.
+ * its currency), probability and expected decision date. None of them blocks a fast capture.
  */
 function opportunityFields(c, input, current = {}) {
   const out = {};
@@ -88,10 +88,6 @@ function opportunityFields(c, input, current = {}) {
     const p = input.probability === '' || input.probability === null ? null : Number(input.probability);
     if (p !== null && (!Number.isInteger(p) || p < 0 || p > 100)) c.fail('probability', 'Use a whole percentage from 0 to 100');
     else out.probability = p;
-  }
-  if (input.temperature !== undefined) {
-    if (input.temperature && !TEMPERATURES.some((t) => t.value === input.temperature)) c.fail('temperature', 'Choose hot, warm or cold');
-    else out.temperature = input.temperature || null;
   }
   if (input.expected_decision_date !== undefined) {
     c.date('expected_decision_date', input.expected_decision_date);
@@ -320,10 +316,6 @@ export function listEnquiries(query, user) {
     where.push('e.campaign_id = ?');
     params.push(intId(query.campaign_id));
   }
-  if (query.temperature) {
-    where.push('e.temperature = ?');
-    params.push(query.temperature);
-  }
   if (intId(query.region_id)) {
     where.push('c.region_id = ?');
     params.push(intId(query.region_id));
@@ -352,7 +344,7 @@ export function listEnquiries(query, user) {
   const sorts = { received: 'e.received_at', due: 'next_overdue_at', stage: 'e.stage', customer: 'c.company_name' };
   const sortCol = sorts[query.sort] || 'next_overdue_at';
   const dir = query.dir === 'desc' ? 'DESC' : 'ASC';
-  const rows = all(`SELECT e.id, e.code, e.title, e.est_value_minor, e.est_currency, e.probability, e.temperature, e.expected_decision_date, e.campaign_id, e.stage, e.received_at, e.received_unknown, e.first_response_at, e.source_code, e.source_event, e.owner_id, e.lost_reason_code, e.decided_at, e.no_followup_reason,
+  const rows = all(`SELECT e.id, e.code, e.title, e.est_value_minor, e.est_currency, e.probability, e.expected_decision_date, e.campaign_id, e.stage, e.received_at, e.received_unknown, e.first_response_at, e.source_code, e.source_event, e.owner_id, e.lost_reason_code, e.decided_at, e.no_followup_reason,
       c.id AS customer_id, c.company_name AS customer_name, c.code AS customer_code, c.country_code, c.segment, c.do_not_contact, u.name AS owner_name,
       (SELECT COALESCE(p.code, el.requirement, 'Unspecified') FROM enquiry_lines el LEFT JOIN products p ON p.id = el.product_id WHERE el.enquiry_id = e.id ORDER BY el.sort, el.id LIMIT 1) AS product,
       (SELECT COUNT(*) FROM enquiry_lines el WHERE el.enquiry_id = e.id) AS line_count,
@@ -667,11 +659,7 @@ export function pipelineBoard(query, user) {
     where.push('c.region_id = ?');
     params.push(intId(query.region_id));
   }
-  if (query.temperature) {
-    where.push('e.temperature = ?');
-    params.push(query.temperature);
-  }
-  const rows = all(`SELECT e.id, e.code, e.title, e.stage, e.owner_id, e.est_value_minor, e.est_currency, e.probability, e.temperature, e.expected_decision_date, e.received_at, e.version,
+  const rows = all(`SELECT e.id, e.code, e.title, e.stage, e.owner_id, e.est_value_minor, e.est_currency, e.probability, e.expected_decision_date, e.received_at, e.version,
       c.id AS customer_id, c.company_name AS customer_name, c.city, u.name AS owner_name,
       (SELECT COALESCE(p.code, el.requirement, 'Unspecified') FROM enquiry_lines el LEFT JOIN products p ON p.id = el.product_id WHERE el.enquiry_id = e.id ORDER BY el.sort, el.id LIMIT 1) AS product,
       (SELECT r.total_minor FROM quote_revisions r JOIN quotations q ON q.id = r.quotation_id WHERE q.enquiry_id = e.id AND r.status IN ('issued','accepted') ORDER BY r.id DESC LIMIT 1) AS quoted_minor,

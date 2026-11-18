@@ -51,7 +51,7 @@ export function salesDashboard(query, user) {
 
   // ---------------------------------------------------------------- enquiries & pipeline
   if (can(user.role, 'enquiries.view')) {
-    const enq = all(`SELECT e.id, e.stage, e.received_at, e.decided_at, e.source_code, e.est_value_minor, e.est_currency, e.probability, e.temperature, e.owner_id,
+    const enq = all(`SELECT e.id, e.stage, e.received_at, e.decided_at, e.source_code, e.est_value_minor, e.est_currency, e.probability, e.owner_id,
         (SELECT r.total_minor FROM quote_revisions r JOIN quotations q ON q.id = r.quotation_id WHERE q.enquiry_id = e.id AND r.status IN ('issued','accepted') ORDER BY r.id DESC LIMIT 1) AS quoted_minor,
         (SELECT r.currency FROM quote_revisions r JOIN quotations q ON q.id = r.quotation_id WHERE q.enquiry_id = e.id AND r.status IN ('issued','accepted') ORDER BY r.id DESC LIMIT 1) AS quoted_currency
       FROM enquiries e WHERE (e.stage IN (${OPEN}) OR e.received_at >= ? OR e.decided_at >= ?) ${and(es)}`, fromI, fromI);
@@ -74,7 +74,6 @@ export function salesDashboard(query, user) {
       received: enq.filter((e) => inPeriod(e.received_at)).length,
       received_this_month: enq.filter((e) => e.received_at && localDate(new Date(e.received_at), tz()) >= `${day.slice(0, 8)}01`).length,
       open: enq.filter((e) => OPEN_ENQUIRY_STAGES.includes(e.stage)).length,
-      hot: enq.filter((e) => OPEN_ENQUIRY_STAGES.includes(e.stage) && e.temperature === 'hot').length,
       won: enq.filter((e) => e.stage === 'won' && inPeriod(e.decided_at)).length,
       lost: enq.filter((e) => e.stage === 'lost' && inPeriod(e.decided_at)).length,
       pipeline_value: pipelineValue,

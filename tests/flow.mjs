@@ -20,7 +20,7 @@ async function login(email) {
     const res = await fetch(BASE + path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
     return { status: res.status, data: await res.json().catch(() => null) };
   };
-  return { user: b.user, get: (p) => call(p), post: (p, body = {}) => call(p, 'POST', body), put: (p, body = {}) => call(p, 'PUT', body) };
+  return { user: b.user, get: (p) => call(p), post: (p, body = {}) => call(p, 'POST', body), put: (p, body = {}) => call(p, 'PUT', body), del: (p) => call(p, 'DELETE') };
 }
 
 const [admin, exec, otherExec, production, quality, dispatch, accounts] = await Promise.all(['admin', 'saurav', 'kavya', 'production', 'quality', 'dispatch', 'accounts'].map((n) => login(`${n}@veritek.example`)));
@@ -36,7 +36,7 @@ const company = `Deccan Control Panels ${stamp}`;
 const dealOf = async (who = exec) => (await who.get(`/pipeline?q=${encodeURIComponent(company)}`)).data.items;
 
 // ---------------------------------------------------------------- 1. the customer comes first
-const noCustomer = await exec.post('/enquiries', { lines: [{ requirement: 'Panel meters' }], source_code: 'website' });
+const noCustomer = await exec.post('/enquiries', { lines: [{ requirement: 'Panel meters' }], source_code: 'email' });
 log(noCustomer.status === 400 && noCustomer.data.details?.fields?.customer_id, 'an enquiry cannot be added without a customer');
 const cust = await exec.post('/customers', {
   company_name: company, country_code: 'IN', city: 'Pune', state: 'Maharashtra', industry: 'Panel building', billing_address: 'Plot 14, Chakan MIDC, Pune',
@@ -155,7 +155,7 @@ log(rows.items.every((d) => d.order) && rows.items.every((d) => d.value_minor ==
 log((await dealOf(otherExec)).length === 0 && (await otherExec.get(`/pipeline?customer_id=${customerId}`)).data.count === 0, 'another salesperson does not see this customer’s deals');
 
 // ---------------------------------------------------------------- rejected quotations
-const enq2 = (await exec.post('/enquiries', { ...enquiryBody, source_code: 'website' })).data.id;
+const enq2 = (await exec.post('/enquiries', { ...enquiryBody, source_code: 'email' })).data.id;
 const q2 = (await exec.post('/quotations', { enquiry_id: enq2, contact_id: contactId, lines: [{ product_id: product.id, qty: 2 }] })).data;
 await exec.post(`/quote-revisions/${q2.revision_id}/issue`, { sent_at: new Date().toISOString(), channel: 'email', summary: 'Second quotation', validity_date: addDays(10), next: { purpose: 'Follow up', owner_id: exec.user.id, due_date: addDays(2) } });
 const version = (await exec.get(`/enquiries/${enq2}`)).data.enquiry.version;
@@ -170,6 +170,90 @@ log(d.flow.production.map((p) => p.phase).join() === 'received,production,qc,rea
 log(['not_sent', 'awaiting_approval', 'sent', 'expired'].every((k) => typeof d.flow.quotations[k] === 'number') && d.tiles.active_orders.count > 0 && typeof d.tiles.delayed.count === 'number', 'the dashboard shows pending quotations, active orders and delays');
 log(!('objects' in (await admin.get(`/customers/${customerId}`)).data) && !('objects' in (await admin.get(`/orders/${orderId}`)).data), 'customer and order records no longer carry QR objects');
 log((await admin.get('/objects')).status === 200, 'the QR module itself still works');
+
+// ---------------------------------------------------------------- the short new-customer form
+const shortPhone = `98${stamp}44`;
+const shortForm = await exec.post('/customers', { company_name: `Konkan Switchboards ${stamp}`, country_code: 'IN', city: 'Ratnagiri', state: 'Maharashtra', acquisition_source: 'field_visit', contacts: [{ name: 'Sameer Joshi', phone: `+91 ${shortPhone}`, email: '' }] });
+log(shortForm.status === 201, 'a customer is created from the short form alone', shortForm.data?.error);
+const shortProfile = (await exec.get(`/customers/${shortForm.data.id}`)).data;
+log(shortProfile.customer.segment === 'domestic' && shortProfile.customer.region_name === 'West' && shortProfile.customer.owner_id === exec.user.id, 'the rest is worked out: domestic, the region from the state, owned by whoever added it', JSON.stringify([shortProfile.customer.segment, shortProfile.customer.region_name]));
+log(shortProfile.contacts[0].phone_raw === `+91 ${shortPhone}`, 'the phone is saved with its country code', shortProfile.contacts[0].phone_raw);
+const samePhone = await exec.post('/customers', { company_name: `Another Name ${stamp}`, country_code: 'IN', contacts: [{ phone: shortPhone }] });
+log(samePhone.data?.details?.code === 'possible_duplicate', 'the same number typed without its code is still recognised as a possible duplicate', JSON.stringify(samePhone.data));
+
+// ---------------------------------------------------------------- the editable source list, without Website
+const sourceList = async () => (await admin.get('/meta')).data.dropdowns.enquiry_source;
+log(!(await sourceList()).some((o) => o.code === 'website'), 'Website is not in the list of sources');
+log((await exec.post('/enquiries', { ...enquiryBody, source_code: 'website' })).status === 400, 'and an enquiry cannot use it');
+const addedSource = await admin.post('/admin/dropdowns/enquiry_source', { label: `Trade directory ${stamp}` });
+const addedCode = `trade_directory_${stamp}`;
+log(addedSource.status === 201 && (await sourceList()).some((o) => o.code === addedCode && o.active), 'an administrator can add a source', addedSource.data?.error);
+log((await admin.put(`/admin/dropdown-options/${addedSource.data.id}`, { label: `Directory ${stamp}` })).status === 200 && (await sourceList()).find((o) => o.code === addedCode).label === `Directory ${stamp}`, 'rename it');
+await exec.post('/customers', { company_name: `Directory Lead ${stamp}`, country_code: 'IN', acquisition_source: addedCode, contacts: [{ email: `lead${stamp}@directory.example` }] });
+log((await admin.del(`/admin/dropdown-options/${addedSource.data.id}`)).status === 409, 'a source a customer already uses cannot be deleted');
+log((await admin.put(`/admin/dropdown-options/${addedSource.data.id}`, { active: false })).status === 200 && !(await sourceList()).find((o) => o.code === addedCode).active, 'but it can be switched off');
+
+// ---------------------------------------------------------------- temperature is gone
+const enquiryRows = (await admin.get('/enquiries?stage=all')).data.rows;
+log(enquiryRows.length > 0 && enquiryRows.every((r) => !('temperature' in r)) && !('temperature' in (await admin.get(`/enquiries/${enquiryRows[0].id}`)).data.enquiry), 'enquiries no longer carry a temperature');
+
+// ---------------------------------------------------------------- dragging cards on the enquiry stage board
+const boardCard = async (id) => (await exec.get('/enquiries/pipeline')).data.columns.flatMap((c) => c.cards).find((c) => c.id === id);
+const dragTo = async (id, stage, details = {}) => exec.post(`/enquiries/${id}/stage`, { stage, version: (await boardCard(id)).version, ...details });
+const refusedOn = (r, field) => r.status === 400 && Boolean(r.data?.details?.fields?.[field]);
+const boardId = (await exec.post('/enquiries', { ...enquiryBody, source_code: 'email' })).data.id;
+const startCard = await boardCard(boardId);
+log(startCard?.stage === 'new', 'a new enquiry starts in the first column', startCard?.stage);
+const firstMove = await dragTo(boardId, 'clarification');
+log(firstMove.status === 200 && (await boardCard(boardId)).stage === 'clarification', 'a card with a next action moves as soon as it is dropped', firstMove.data?.error);
+const staleMove = await exec.post(`/enquiries/${boardId}/stage`, { stage: 'quote_to_prepare', version: startCard.version });
+log(staleMove.status === 409 && (await boardCard(boardId)).stage === 'clarification', 'a card changed by someone else in the meantime is not moved');
+log(refusedOn(await dragTo(boardId, 'quote_sent'), 'stage'), 'Quotation sent is refused until a quotation has been recorded as sent');
+log(refusedOn(await dragTo(boardId, 'won'), 'stage'), 'Won is refused without a confirmed order');
+log(refusedOn(await dragTo(boardId, 'on_hold'), 'hold_review_date'), 'On hold asks for a review date');
+log(refusedOn(await dragTo(boardId, 'lost'), 'lost_reason_code'), 'Lost asks for the reason');
+log(refusedOn(await dragTo(boardId, 'cancelled'), 'cancel_reason_code'), 'Cancelled asks for the reason');
+const boardTask = (await exec.get(`/enquiries/${boardId}`)).data.tasks.find((t) => t.status === 'open');
+await exec.post(`/tasks/${boardTask.id}/cancel`, { reason: 'Testing the board', version: boardTask.version });
+log(!(await boardCard(boardId)).next_due && refusedOn(await dragTo(boardId, 'quote_to_prepare'), 'next.purpose'), 'a card with no next action asks for one');
+const withNext = await dragTo(boardId, 'quote_to_prepare', { next: { purpose: 'Prepare the quotation', owner_id: exec.user.id, due_date: addDays(1) } });
+log(withNext.status === 200 && (await boardCard(boardId)).stage === 'quote_to_prepare' && Boolean((await boardCard(boardId)).next_due), 'and moves once it is given', withNext.data?.error);
+const heldMove = await dragTo(boardId, 'on_hold', { hold_review_date: addDays(7), hold_reason: 'Budget review' });
+log(heldMove.status === 200 && (await boardCard(boardId)).stage === 'on_hold', 'On hold works with a review date', heldMove.data?.error);
+const closedMove = await dragTo(boardId, 'lost', { lost_reason_code: 'price', lost_note: 'Lost on price' });
+log(closedMove.status === 200 && !(await boardCard(boardId)), 'a card closed as lost leaves the board', closedMove.data?.error);
+log((await production.post(`/enquiries/${enquiryRows[0].id}/stage`, { stage: 'clarification' })).status === 403, 'people who cannot edit enquiries cannot move cards');
+
+// ---------------------------------------------------------------- payment, recorded on the order
+const orderNow = async (id) => (await admin.get(`/orders/${id}`)).data;
+const pay = (id, amount, reference) => accounts.post(`/finance/orders/${id}/advances`, { amount, effective_date: today, reference });
+let paying = await orderNow(orderId);
+const quoted = (await exec.get(`/quotations/${quotationId}`)).data.current.grand_total_minor;
+log(paying.finance.total_minor === quoted, 'the order total matches the quotation total', `${paying.finance.total_minor} / ${quoted}`);
+log(paying.finance.received_minor === paying.order.advance_required_minor && paying.finance.balance_minor === quoted - paying.finance.received_minor, 'the order shows what has come in and the balance');
+const balance = await pay(orderId, (paying.finance.balance_minor / 100).toFixed(2), `BAL${stamp}`);
+log(balance.status === 201, 'the balance is recorded on the order', balance.data?.error);
+paying = await orderNow(orderId);
+log(paying.payment.code === 'paid' && paying.finance.balance_minor === 0, 'once the total is covered the order is Paid', paying.payment.code);
+const mistake = paying.finance.receipts.find((r) => r.reference === `BAL${stamp}`);
+log((await accounts.post(`/finance/receipts/${mistake.id}/reverse`, { reason: 'Entered on the wrong order' })).status === 200, 'a payment entered by mistake can be undone');
+paying = await orderNow(orderId);
+log(paying.payment.code === 'advance_received' && paying.finance.balance_minor > 0, 'and the balance comes back', paying.payment.code);
+
+// ---------------------------------------------------------------- a new order without a quotation
+const direct = await exec.post('/orders', {
+  customer_id: shortForm.data.id, owner_id: exec.user.id, source_code: 'repeat_order', po_reference: `KSB/${stamp}`, received_date: today, currency: 'INR', advance_pct: '', confirm: true, confirm_duplicate_po: false,
+  lines: [{ product_id: product.id, description: '', confirmed_qty: '2', unit_price: '1000', commitment_state: 'uncommitted' }],
+});
+log(direct.status === 201, 'a new order is created from the short form', direct.data?.error);
+let plain = await orderNow(direct.data.id);
+log(plain.order.status === 'confirmed' && plain.lines[0].commitment_state === 'uncommitted', 'it is confirmed straight away, with the dispatch date still to be agreed');
+log(plain.payment.code === 'not_invoiced', 'nothing is shown as received yet', plain.payment.code);
+await pay(direct.data.id, '500', `PART${stamp}`);
+plain = await orderNow(direct.data.id);
+log(plain.payment.code === 'part_paid', 'a first payment with no advance terms shows as Part paid', plain.payment.code);
+await pay(direct.data.id, (plain.finance.balance_minor / 100).toFixed(2), `FULL${stamp}`);
+log((await orderNow(direct.data.id)).payment.code === 'paid', 'and the rest makes it Paid');
 
 console.log(failures ? `\n${failures} OF ${checks} FLOW CHECKS FAILED` : `\nALL ${checks} FLOW CHECKS PASSED`);
 process.exit(failures ? 1 : 0);

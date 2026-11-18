@@ -386,9 +386,9 @@ export const RULES = [
   { key: 'delayed_no_action', label: 'Delayed without next action', fn: ruleNoAction },
   { key: 'customer_not_informed', label: 'Customer not informed', fn: ruleNotInformed },
   { key: 'blocker_overdue', label: 'Blocker action overdue (escalation)', fn: ruleBlockerOverdue },
-  { key: 'customer_inactive', label: 'Customer inactive', fn: ruleCustomerInactive },
-  { key: 'receivables', label: 'Overdue receivables & broken promises (P1)', fn: ruleInvoices },
-  { key: 'complaints', label: 'Complaint responses (P1)', fn: ruleComplaints },
+  { key: 'customer_inactive', label: 'Customer inactive', fn: ruleCustomerInactive, module: 'pastCustomers' },
+  { key: 'receivables', label: 'Overdue receivables & broken promises (P1)', fn: ruleInvoices, module: 'payments' },
+  { key: 'complaints', label: 'Complaint responses (P1)', fn: ruleComplaints, module: 'complaints' },
   { key: 'quote_expiring', label: 'Quotation close to expiry', fn: ruleQuoteExpiring },
   { key: 'sample_feedback', label: 'Sample / catalogue feedback due', fn: ruleSampleFeedback },
   { key: 'repeat_order', label: 'Repeat-order check', fn: ruleRepeatOrder },
@@ -413,6 +413,7 @@ export function runEvaluator({ trigger = 'scheduler' } = {}) {
     return withContext({ source: 'scheduler', userId: null }, () => {
       const ctx = { lines: activeLines(), refresh: new Set() };
       for (const rule of RULES) {
+        if (rule.module && !settings().modules[rule.module]) continue; // that module is switched off
         try {
           summary[rule.key] = tx(() => rule.fn(ctx));
         } catch (err) {

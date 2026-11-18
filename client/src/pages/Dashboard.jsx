@@ -36,7 +36,7 @@ export default function Dashboard() {
       {d && (
         <>
           <div className="tiles">
-            {d.enquiries && <Tile icon="inbox" label="Enquiries received" value={number(d.enquiries.received)} foot={`${number(d.enquiries.open)} open · ${number(d.enquiries.hot)} hot`} to="/enquiries" />}
+            {d.enquiries && <Tile icon="inbox" label="Enquiries received" value={number(d.enquiries.received)} foot={`${number(d.enquiries.open)} open`} to="/enquiries" />}
             {d.enquiries && values && <Tile icon="pipeline" label="Open pipeline" value={compactByCurrency(d.enquiries.pipeline_value)} foot={`Weighted ${compactByCurrency(d.enquiries.weighted_value)}${d.enquiries.unvalued_open ? ` · ${d.enquiries.unvalued_open} not valued` : ''}`} to="/enquiries?view=pipeline" />}
             {d.quotations && <Tile icon="quotation" label="Quotations issued" value={number(d.quotations.issued)} foot={values ? `${compactByCurrency(d.quotations.issued_value)} · ${d.quotations.awaiting} awaiting decision` : `${d.quotations.awaiting} awaiting decision`} to="/quotations?status=awaiting" />}
             <Tile icon="box" label="Orders confirmed" value={number(d.orders.confirmed)} foot={values ? compactByCurrency(d.orders.value_by_currency) : `${d.orders.active} active orders`} to="/orders" />

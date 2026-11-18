@@ -8,7 +8,7 @@ import {
 } from '../util.js';
 import {
   createObject, updateObject, archiveObject, deleteObject, duplicateObject, attachFile, updateFile, removeFile,
-  reorderFiles, restoreFileVersion, objectFiles, ensureCode, scanStats, publicUrlFor, normalizeFields, objectHealth, objectSettings, fileData,
+  reorderFiles, restoreFileVersion, objectFiles, ensureCode, scanStats, dailyScans, publicUrlFor, normalizeFields, objectHealth, objectSettings, fileData,
 } from '../services/objects.js';
 import { qrPng, qrSvg, barcodePng, barcodeSvg, zipFiles } from '../lib/codes.js';
 import { xlsxToSheets, csvToRows } from '../lib/docpreview.js';
@@ -79,18 +79,10 @@ r.get('/objects/stats', allow('objects.view'), h(() => {
   const codes = get('SELECT COUNT(*) AS n FROM object_codes').n;
   const storage = get(`SELECT COALESCE(SUM(a.size), 0) AS bytes, COUNT(*) AS files FROM attachments a
     WHERE a.id IN (SELECT attachment_id FROM attachment_links WHERE entity_type = 'object')`);
-  const today = new Date().toISOString().slice(0, 10);
-  const scansToday = get('SELECT COUNT(*) AS n FROM scan_events WHERE substr(scanned_at, 1, 10) = ?', today).n;
   const recent = all(`${SELECT} WHERE o.deleted_at IS NULL ORDER BY o.created_at DESC LIMIT 5`).map(clean);
   const updated = all(`${SELECT} WHERE o.deleted_at IS NULL AND o.updated_at IS NOT NULL ORDER BY o.updated_at DESC LIMIT 5`).map(clean);
-  const scanSeries = all(`SELECT substr(scanned_at, 1, 10) AS day, COUNT(*) AS scans FROM scan_events WHERE substr(scanned_at, 1, 10) >= ? GROUP BY 1 ORDER BY 1`,
-    new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10));
-  const series = [];
-  for (let i = 29; i >= 0; i--) {
-    const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
-    series.push({ day: d, scans: scanSeries.find((x) => x.day === d)?.scans || 0 });
-  }
-  return { ...base, codes, ...storage, scans_today: scansToday, recent, updated, series };
+  const series = dailyScans();
+  return { ...base, codes, ...storage, scans_today: series.at(-1).scans, recent, updated, series };
 }));
 
 r.get('/objects/health', allow('objects.view'), h(() => objectHealth()));

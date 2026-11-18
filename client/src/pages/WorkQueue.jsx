@@ -102,7 +102,7 @@ export default function WorkQueue() {
             { key: 'order', label: 'Order', render: (o) => <><Link to={`/orders/${o.id}`}><strong>{o.code}</strong></Link><div className="sub">{o.customer_name}</div></> },
             { key: 'why', label: 'Needs', render: (o) => <div className="row wrap" style={{ gap: 4 }}>{o.reasons.map((r) => <Badge key={r} size="sm" tone={/overdue|not informed/i.test(r) ? 'red' : 'amber'}>{r}</Badge>)}</div> },
             { key: 'lines', label: 'Lines', render: (o) => o.lines.filter((l) => l.quantities.remaining > 0).slice(0, 3).map((l) => <div key={l.id} className="small">{l.product} · {l.phase_label} · last update {l.source_update_at ? timeAgo(l.source_update_at) : 'never'}</div>) },
-            { key: 'act', label: '', render: (o) => { const l = o.lines.find((x) => x.quantities.remaining > 0); return l ? <Button size="xs" variant="primary" onClick={() => quick.open('update', { line_id: l.id, order_code: o.code })}>Update</Button> : null; } },
+            { key: 'act', label: '', render: (o) => { const l = o.lines.find((x) => x.quantities.remaining > 0); return l ? <Button size="xs" variant="primary" to={`/orders/${o.id}`}>Update</Button> : null; } },
           ]} />
         </Card>
       )}

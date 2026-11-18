@@ -5,9 +5,35 @@ Changes are audited (Settings → Audit log). Environment variables are in [setu
 
 ## Settings
 
+Settings marked *(admin tools)* are on pages that are switched off in Version 1 (see `modules` below).
+
+### modules
+
+The parts of the CRM kept for later versions. All are `false` in Version 1; `true` brings back the module's
+pages, menu items and reminders. Its data is kept while it is off.
+
+| Key | Default | Brings back |
+|---|---|---|
+| `workQueue` | `false` | Work queue |
+| `salesDashboard` | `false` | Sales dashboard |
+| `contacts` | `false` | Contacts list |
+| `pastCustomers` | `false` | Past customers and the repeat-order prompts |
+| `payments` | `false` | Payments register: invoices, receipts, ageing, promises; receivable reminders |
+| `complaints` | `false` | Complaints and service; complaint reminders |
+| `reports` | `false` | Reports |
+| `team` | `false` | Team: approvals, targets, performance |
+| `adminTools` | `false` | The other Settings tabs (regions, factories and rules; calendar and rules; system and backups; audit log), every dropdown list, more person details and every role |
+
+There is no switch on screen. An administrator switches a module on with one call, which is recorded in the
+audit log, for example:
+
+```
+PUT /api/admin/settings/modules   {"payments": true}
+```
+
 ### company
 
-*Changed in:* Settings → Company & commercial → Company profile
+*Changed in:* Settings → Company
 
 | Key | Default |
 |---|---|
@@ -23,7 +49,7 @@ Changes are audited (Settings → Audit log). Environment variables are in [setu
 
 ### calendar
 
-*Changed in:* Settings → Calendar & rules → Working calendar
+*Changed in:* Settings → Calendar & rules → Working calendar *(admin tools)*
 
 | Key | Default |
 |---|---|
@@ -35,7 +61,7 @@ Changes are audited (Settings → Audit log). Environment variables are in [setu
 
 ### rules
 
-*Changed in:* Settings → Calendar & rules → Reminder & alert rules
+*Changed in:* Settings → Calendar & rules → Reminder & alert rules *(admin tools)*
 
 | Key | Default |
 |---|---|
@@ -53,36 +79,37 @@ Changes are audited (Settings → Audit log). Environment variables are in [setu
 
 ### reminders
 
-*Changed in:* Settings → Company & commercial → Sales reminders
+*Changed in:* Settings → Company → Sales reminders *(admin tools)*
 
 | Key | Default |
 |---|---|
 | `quotationFollowupWorkingDays` | `3` |
 | `quotationExpiryWarnDays` | `3` |
 | `sampleFeedbackDays` | `5` |
-| `repeatOrderEnabled` | `true` |
+| `repeatOrderEnabled` | `false` |
 | `repeatOrderMinOrders` | `2` |
 | `paymentReminderDays` | `0` |
-| `managementSummaries` | `true` |
+| `managementSummaries` | `false` |
 
 ### access
 
-*Changed in:* Settings → Calendar & rules → Access policy
+*Changed in:* Settings → Calendar & rules → Access policy *(admin tools)*
 
 | Key | Default |
 |---|---|
 | `salesScope` | `own` |
-| `coordinatorMode` | `true` |
+| `coordinatorMode` | `false` |
 | `productionSeesValues` | `false` |
 | `dncPolicy` | `warn` |
 | `autoAssignEnquiries` | `true` |
 
 ### approvals
 
-*Changed in:* Settings → Company & commercial → Quotation approvals
+*Changed in:* Settings → Company → Quotation approvals *(admin tools)*
 
 | Key | Default |
 |---|---|
+| `enabled` | `false` |
 | `discountManagerPct` | `10` |
 | `discountHeadPct` | `18` |
 | `minMarginPct` | `22` |
@@ -92,7 +119,7 @@ Changes are audited (Settings → Audit log). Environment variables are in [setu
 
 ### quotation
 
-*Changed in:* Settings → Company & commercial → Quotation defaults
+*Changed in:* Settings → Company → Quotation defaults
 
 | Key | Default |
 |---|---|
@@ -104,7 +131,7 @@ Changes are audited (Settings → Audit log). Environment variables are in [setu
 
 ### objects
 
-*Changed in:* Settings → Company & commercial → QR codes & scan pages
+*Changed in:* QR codes → QR settings
 
 | Key | Default |
 |---|---|
@@ -117,7 +144,7 @@ Changes are audited (Settings → Audit log). Environment variables are in [setu
 
 ### escalation
 
-*Changed in:* Settings → Calendar & rules → Access policy (default escalation manager)
+*Changed in:* Settings → Calendar & rules → Access policy (default escalation manager) *(admin tools)*
 
 | Key | Default |
 |---|---|
@@ -125,7 +152,7 @@ Changes are audited (Settings → Audit log). Environment variables are in [setu
 
 ### finance
 
-*Changed in:* Payments → Data as of
+*Changed in:* Payments → Data as of *(payments register)*
 
 | Key | Default |
 |---|---|
@@ -135,7 +162,7 @@ Changes are audited (Settings → Audit log). Environment variables are in [setu
 
 ### scheduler
 
-*Changed in:* Settings → Calendar & rules → Scheduler & backups
+*Changed in:* Settings → Calendar & rules → Scheduler & backups *(admin tools)*
 
 | Key | Default |
 |---|---|
@@ -144,7 +171,7 @@ Changes are audited (Settings → Audit log). Environment variables are in [setu
 
 ### backup
 
-*Changed in:* Settings → Calendar & rules → Scheduler & backups
+*Changed in:* Settings → Calendar & rules → Scheduler & backups *(admin tools)*
 
 | Key | Default |
 |---|---|
@@ -160,7 +187,7 @@ Settings → Dropdowns. Codes are stable; labels can be renamed, values added, a
 
 | List | Values |
 |---|---|
-| Enquiry source <br><sub>`enquiry_source`</sub> | Existing customer, Website, WhatsApp, Email, Exhibition, Field visit, Dealer / referral, Outbound, IndiaMART / online portal, Tender, Event / campaign, Other *(note)*, Unknown |
+| Enquiry source / how they found us <br><sub>`enquiry_source`</sub> | Existing customer, WhatsApp, Email, Exhibition, Field visit, Dealer / referral, Outbound, IndiaMART / online portal, Tender, Event / campaign, Other *(note)*, Unknown |
 | Lost / no-purchase reason <br><sub>`lost_reason`</sub> | Price, Delivery time, Specification / feature mismatch, Certification / approval requirement, Competitor selected, Project postponed, Project cancelled, No current requirement, No response, Credit / payment terms, Unknown, Other *(note)* |
 | Win reason <br><sub>`win_reason`</sub> | Technical superiority, Competitive price, Faster delivery, Existing relationship, Service support, Brand reputation, Approved vendor, Other *(note)* |
 | Enquiry cancellation reason <br><sub>`enquiry_cancel_reason`</sub> | Withdrawn by customer, Duplicate enquiry, Invalid / spam, Other *(note)* |

@@ -13,10 +13,10 @@ export const COMPANY = { name: 'Veritek Engineering Private Limited', short: 'VE
 export const ROLES = [
   opt('super_admin', 'Super admin', { group: 'admin', scope: 'all', rank: 6, login: true, description: 'Everything, including settings, users and access. Approves exceptional corrections.' }),
   opt('management', 'Management', { group: 'admin', scope: 'all', rank: 5, login: true, description: 'Views all records and reports, assigns owners, approves quotations and exceptional corrections.' }),
-  opt('coordinator', 'Data coordinator', { group: 'coordinator', scope: 'all', rank: 3, login: true, description: 'Creates and updates operational records, records updates on behalf of others, imports. Cannot erase history or grant access.' }),
+  opt('coordinator', 'Coordinator', { group: 'coordinator', scope: 'all', rank: 3, login: true, description: 'Creates and updates operational records, records updates on behalf of others, imports. Cannot erase history or grant access.' }),
   opt('sales_head', 'Sales head', { group: 'sales', scope: 'all', rank: 4, login: true, description: 'All regions: enquiries, quotations, approvals above the manager threshold, targets.' }),
   opt('regional_manager', 'Regional sales manager', { group: 'sales', scope: 'region', rank: 3, login: true, description: 'Customers in their region: enquiries, quotations and approvals for that region.' }),
-  opt('sales_executive', 'Sales / export executive', { group: 'sales', scope: 'own', rank: 2, login: true, description: 'Their own customers: enquiries, calls, quotations and customer communication; manages assigned tasks.' }),
+  opt('sales_executive', 'Sales', { group: 'sales', scope: 'own', rank: 2, login: true, description: 'Their own customers: enquiries, calls, quotations and customer communication; manages assigned tasks.' }),
   opt('commercial', 'Quotation / commercial', { group: 'sales', scope: 'all', rank: 2, login: true, description: 'Quotations, purchase-order checks and order entry for all customers.' }),
   opt('production', 'Production', { group: 'production', scope: 'factory', rank: 1, login: true, description: 'Updates order readiness, delay reasons and dispatch for their factory. Quantities and dates; commercial values hidden unless allowed.' }),
   opt('quality', 'Quality / QC', { group: 'production', scope: 'factory', rank: 1, login: true, description: 'QC summaries and passing lines from QC to ready. Sees quantities and dates, not prices.' }),
@@ -32,6 +32,8 @@ export const scopeOf = (role) => ROLES.find((r) => r.value === role)?.scope || '
 export const roleRank = (role) => ROLES.find((r) => r.value === role)?.rank ?? 0;
 export const rolesInGroup = (...groups) => ROLES.filter((r) => groups.includes(r.group)).map((r) => r.value);
 export const loginRole = (role) => Boolean(ROLES.find((r) => r.value === role)?.login);
+// The roles offered when adding a person. The others still work for anyone who already has them.
+export const V1_ROLES = ['super_admin', 'management', 'coordinator', 'sales_executive', 'production', 'quality', 'dispatch', 'accounts'];
 
 // The website's WhatsApp product finder: a message to this number from an ACTIVE user with one of these roles
 // gets product files instead of the customer chat. The website reads crm.users (phone, role, active) itself,
@@ -181,18 +183,12 @@ export const ENQUIRY_LINE_OUTCOMES = [
   opt('cancelled', 'Cancelled', { tone: 'slate' }),
 ];
 
-export const TEMPERATURES = [
-  opt('hot', 'Hot', { tone: 'red' }),
-  opt('warm', 'Warm', { tone: 'amber' }),
-  opt('cold', 'Cold', { tone: 'blue' }),
-];
-
 export const QUOTE_STATUSES = [
-  opt('draft', 'Pending — not sent yet', { tone: 'amber' }),
-  opt('issued', 'Sent — awaiting decision', { tone: 'blue' }),
-  opt('accepted', 'Approved by customer', { tone: 'green' }),
+  opt('draft', 'Pending', { tone: 'amber' }),
+  opt('issued', 'Sent', { tone: 'blue' }),
+  opt('accepted', 'Approved', { tone: 'green' }),
   opt('rejected', 'Rejected', { tone: 'red' }),
-  opt('superseded', 'Superseded', { tone: 'slate' }),
+  opt('superseded', 'Replaced', { tone: 'slate' }),
 ];
 
 // The four states a quotation is tracked by. "Approved" means the customer approved it; internal discount
@@ -310,12 +306,22 @@ export const REACTIVATION_STATUSES = [
 export const SEGMENTS = [opt('domestic', 'Domestic'), opt('export', 'Export')];
 export const CURRENCIES = ['INR', 'USD', 'EUR', 'AED', 'GBP', 'SAR'];
 
+// [ISO code, name, international dialling code].
 export const COUNTRIES = [
-  ['IN', 'India'], ['AE', 'United Arab Emirates'], ['SA', 'Saudi Arabia'], ['OM', 'Oman'], ['QA', 'Qatar'], ['KW', 'Kuwait'],
-  ['BH', 'Bahrain'], ['KE', 'Kenya'], ['NG', 'Nigeria'], ['TZ', 'Tanzania'], ['EG', 'Egypt'], ['ZA', 'South Africa'],
-  ['BD', 'Bangladesh'], ['LK', 'Sri Lanka'], ['NP', 'Nepal'], ['SG', 'Singapore'], ['MY', 'Malaysia'], ['GB', 'United Kingdom'],
-  ['US', 'United States'], ['DE', 'Germany'],
-].map(([value, label]) => ({ value, label }));
+  ['IN', 'India', '91'], ['AE', 'United Arab Emirates', '971'], ['SA', 'Saudi Arabia', '966'], ['OM', 'Oman', '968'], ['QA', 'Qatar', '974'], ['KW', 'Kuwait', '965'],
+  ['BH', 'Bahrain', '973'], ['KE', 'Kenya', '254'], ['NG', 'Nigeria', '234'], ['TZ', 'Tanzania', '255'], ['EG', 'Egypt', '20'], ['ZA', 'South Africa', '27'],
+  ['BD', 'Bangladesh', '880'], ['LK', 'Sri Lanka', '94'], ['NP', 'Nepal', '977'], ['SG', 'Singapore', '65'], ['MY', 'Malaysia', '60'], ['GB', 'United Kingdom', '44'],
+  ['US', 'United States', '1'], ['DE', 'Germany', '49'],
+].map(([value, label, dial]) => ({ value, label, dial }));
+export const dialFor = (country) => COUNTRIES.find((c) => c.value === country)?.dial || null;
+
+// Spelled as the sales regions list them, because a customer's region is worked out from the state.
+export const INDIAN_STATES = [
+  'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa', 'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka', 'Kerala',
+  'Madhya Pradesh', 'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram', 'Nagaland', 'Odisha', 'Punjab', 'Rajasthan', 'Sikkim', 'Tamil Nadu', 'Telangana', 'Tripura',
+  'Uttar Pradesh', 'Uttarakhand', 'West Bengal', 'Andaman and Nicobar Islands', 'Chandigarh', 'Dadra and Nagar Haveli and Daman and Diu', 'Delhi',
+  'Jammu and Kashmir', 'Ladakh', 'Lakshadweep', 'Puducherry',
+];
 
 export const INDUSTRIES = [
   'Panel building', 'Switchgear', 'Automotive', 'Pharma', 'Hospitality', 'Infrastructure', 'Data centre', 'Textiles',
@@ -462,9 +468,9 @@ export const CODE_TYPES = [
 const o = (code, label, extra = {}) => ({ code, label, ...extra });
 export const DROPDOWNS = {
   enquiry_source: {
-    label: 'Enquiry source',
+    label: 'Enquiry source / how they found us',
     options: [
-      o('existing_customer', 'Existing customer'), o('website', 'Website'), o('whatsapp', 'WhatsApp'), o('email', 'Email'),
+      o('existing_customer', 'Existing customer'), o('whatsapp', 'WhatsApp'), o('email', 'Email'),
       o('exhibition', 'Exhibition'), o('field_visit', 'Field visit'), o('dealer_referral', 'Dealer / referral'),
       o('outbound', 'Outbound'), o('online_portal', 'IndiaMART / online portal'), o('tender', 'Tender'), o('campaign', 'Event / campaign'),
       o('other', 'Other', { note: true }), o('unknown', 'Unknown'),
@@ -592,6 +598,10 @@ export const TASK_PURPOSES = [
 
 // ------------------------------------------------------------------ settings
 export const DEFAULT_SETTINGS = {
+  // Version 1 keeps to the daily flow: customer, enquiry, quotation, order, payment, production, dispatch,
+  // exhibitions and QR. These finished modules are switched off; their code and data stay, and setting one to
+  // true brings it back.
+  modules: { workQueue: false, salesDashboard: false, contacts: false, pastCustomers: false, payments: false, complaints: false, reports: false, team: false, adminTools: false },
   company: {
     name: COMPANY.name,
     short: COMPANY.short,
@@ -627,19 +637,20 @@ export const DEFAULT_SETTINGS = {
     quotationFollowupWorkingDays: 3,
     quotationExpiryWarnDays: 3,
     sampleFeedbackDays: 5,
-    repeatOrderEnabled: true,
+    repeatOrderEnabled: false,
     repeatOrderMinOrders: 2,
     paymentReminderDays: 0,
-    managementSummaries: true,
+    managementSummaries: false,
   },
   access: {
     salesScope: 'own', // 'own' | 'all' — sales executives; management and coordinator always see everything
-    coordinatorMode: true, // source person required when entering an update on someone's behalf
+    coordinatorMode: false, // when on, the source person is required for an update entered on someone's behalf
     productionSeesValues: false,
     dncPolicy: 'warn', // 'warn' | 'block' outreach to do-not-contact customers
     autoAssignEnquiries: true, // default enquiry owner from assignment rules when none is chosen
   },
   approvals: {
+    enabled: false, // internal approval of discounts and margins before a quotation goes out
     discountManagerPct: 10, // above this -> Regional sales manager approval
     discountHeadPct: 18, // above this -> Sales head approval
     minMarginPct: 22, // below this -> Sales head approval

@@ -2,7 +2,7 @@ import { lazy, Suspense } from 'react';
 import { createBrowserRouter, Navigate, Outlet, RouterProvider, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth.jsx';
 import { ConfirmProvider, Spinner, ToastProvider, EmptyState, Button } from './components/ui.jsx';
-import { MetaProvider } from './components/domain.jsx';
+import { MetaProvider, useMeta } from './components/domain.jsx';
 import { QuickEntryProvider } from './components/QuickEntry.jsx';
 import Layout from './components/Layout.jsx';
 import Login from './pages/Login.jsx';
@@ -44,10 +44,13 @@ const ScanPage = lazy(() => import('./pages/ScanPage.jsx'));
 const QuotePortal = lazy(() => import('./pages/Portal.jsx').then((m) => ({ default: m.QuotePortal })));
 const OrderPortal = lazy(() => import('./pages/Portal.jsx').then((m) => ({ default: m.OrderPortal })));
 
-function Guard({ perm, children }) {
+function Guard({ perm, module, children }) {
   const { can } = useAuth();
+  const meta = useMeta();
+  // A module that is switched off is simply not there; old links land on the dashboard.
+  if (module && !meta.settings.modules?.[module]) return <Navigate to="/" replace />;
   if (perm && !can(...[].concat(perm))) {
-    return <EmptyState icon="lock" title="Not available for your role" message="Your access does not include this area. Ask an administrator if you need it." action={<Button to="/">Back to overview</Button>} />;
+    return <EmptyState icon="lock" title="Not available for your role" message="Your access does not include this area. Ask an administrator if you need it." action={<Button to="/">Back to dashboard</Button>} />;
   }
   return children;
 }
@@ -87,7 +90,7 @@ function PublicShell() {
   );
 }
 
-const g = (perm, el) => <Guard perm={perm}>{el}</Guard>;
+const g = (perm, el, module) => <Guard perm={perm} module={module}>{el}</Guard>;
 const router = createBrowserRouter([
   { path: '/login', element: <LoginRoute /> },
   {
@@ -103,10 +106,10 @@ const router = createBrowserRouter([
     element: <PrivateShell />,
     children: [
       { index: true, element: g('dashboard.view', <Overview />) },
-      { path: 'queue', element: g('queue.view', <WorkQueue />) },
+      { path: 'queue', element: g('queue.view', <WorkQueue />, 'workQueue') },
       { path: 'followups', element: g('tasks.edit', <Followups />) },
-      { path: 'analytics', element: g('analytics.view', <Dashboard />) },
-      { path: 'past-customers', element: g('past.view', <PastCustomers />) },
+      { path: 'analytics', element: g('analytics.view', <Dashboard />, 'salesDashboard') },
+      { path: 'past-customers', element: g('past.view', <PastCustomers />, 'pastCustomers') },
       { path: 'pipeline', element: g(['enquiries.view', 'orders.view'], <Pipeline />) },
       { path: 'enquiries', element: g('enquiries.view', <Enquiries />) },
       { path: 'enquiries/:id', element: g('enquiries.view', <EnquiryDetail />) },
@@ -121,7 +124,7 @@ const router = createBrowserRouter([
       { path: 'dispatches', element: g('orders.view', <Dispatches />) },
       { path: 'customers', element: g('customers.view', <Customers />) },
       { path: 'customers/:id', element: g('customers.view', <CustomerProfile />) },
-      { path: 'contacts', element: g('customers.view', <Contacts />) },
+      { path: 'contacts', element: g('customers.view', <Contacts />, 'contacts') },
       { path: 'campaigns', element: g('campaigns.view', <Campaigns />) },
       { path: 'campaigns/:id', element: g('campaigns.view', <CampaignDetail />) },
       { path: 'products', element: g('products.view', <Products />) },
@@ -129,14 +132,14 @@ const router = createBrowserRouter([
       { path: 'objects', element: g('objects.view', <Objects />) },
       { path: 'objects/labels', element: g('objects.view', <ObjectLabels />) },
       { path: 'objects/:id', element: g('objects.view', <ObjectDetail />) },
-      { path: 'reports', element: g('reports.view', <Reports />) },
-      { path: 'payments', element: g('finance.view', <Payments />) },
-      { path: 'complaints', element: g('complaints.view', <Complaints />) },
-      { path: 'complaints/:id', element: g('complaints.view', <ComplaintDetail />) },
-      { path: 'team', element: g(['team.view', 'quotes.approve'], <Team />) },
+      { path: 'reports', element: g('reports.view', <Reports />, 'reports') },
+      { path: 'payments', element: g('finance.view', <Payments />, 'payments') },
+      { path: 'complaints', element: g('complaints.view', <Complaints />, 'complaints') },
+      { path: 'complaints/:id', element: g('complaints.view', <ComplaintDetail />, 'complaints') },
+      { path: 'team', element: g(['team.view', 'quotes.approve'], <Team />, 'team') },
       { path: 'settings', element: g('settings.manage', <Settings />) },
       { path: 'account', element: <Account /> },
-      { path: '*', element: <EmptyState icon="search" title="Page not found" action={<Button to="/">Go to overview</Button>} /> },
+      { path: '*', element: <EmptyState icon="search" title="Page not found" action={<Button to="/">Go to dashboard</Button>} /> },
     ],
   },
 ]);

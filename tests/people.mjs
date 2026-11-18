@@ -2,7 +2,7 @@
 // (it reads users.phone, role and active itself). The phone rules must match the website's, an administrator's
 // phone must give a full number, other roles' phones are saved as typed, and the phone stays optional.
 // Runs against a seeded database.
-import { whatsappNumber, phoneParts, finderPhoneProblem } from '../shared/rules.js';
+import { whatsappNumber, phoneParts, finderPhoneProblem, splitPhone, joinPhone, tidyPhoneNumber } from '../shared/rules.js';
 import { ROLES, PRODUCT_FINDER_ROLES } from '../shared/constants.js';
 
 const BASE = process.env.API || 'http://localhost:4399/api';
@@ -30,6 +30,13 @@ log(phoneParts('Works mobile: 98200 11111').length === 1, '"or" inside a word do
 log(finderPhoneProblem('+91 98200 11111') === null && finderPhoneProblem('98200 11111 / +971 50 123 4567') === null, 'full numbers pass');
 log(Boolean(finderPhoneProblem('2345 678')) && Boolean(finderPhoneProblem('reception')), 'a short number or no number fails');
 log(/“22222”/.test(finderPhoneProblem('+91 98200 11111 / 22222') || ''), 'a second number that is not full is named');
+
+// ---------------------------------------------------------------- the country-code picker on customer phones
+const split = (v) => JSON.stringify(splitPhone(v));
+log(split('+91 98200 11111') === '{"dial":"91","number":"98200 11111"}' && split('+971 50 123 4567') === '{"dial":"971","number":"50 123 4567"}' && split('98200 11111') === '{"dial":null,"number":"98200 11111"}' && split('+33 1 23') === '{"dial":null,"number":"+33 1 23"}', 'a phone splits into its country code and number');
+log(joinPhone('91', '98200 11111') === '+91 98200 11111' && joinPhone('91', '') === '' && joinPhone('91', '+971 50 123 4567') === '+971 50 123 4567' && joinPhone('91', '0044 7911 123456') === '+44 7911 123456', 'a code and number join up, and a number pasted with its own code keeps it');
+log(tidyPhoneNumber('91', '098200 11111') === '98200 11111' && tidyPhoneNumber('91', '91 98200 11111') === '98200 11111' && tidyPhoneNumber('91', '9198200111') === '9198200111', 'a leading 0 or repeated code is tidied, but a mobile that starts with 91 is left alone');
+log(whatsappNumber(joinPhone('91', '98200 11111')) === '919820011111', 'a number saved this way is the one the website reads');
 
 // ---------------------------------------------------------------- through Settings → People & access
 const login = await (await fetch(`${BASE}/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'admin@veritek.example', password: 'Veritek@123' }) })).json();

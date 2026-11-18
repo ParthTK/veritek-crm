@@ -29,6 +29,7 @@ import { storeAttachment } from '../server/services/attachments.js';
 import { storeUpload, commitImport } from '../server/services/imports.js';
 import { runEvaluator } from '../server/services/alerts.js';
 import { REGIONS, FAMILIES, CATALOGUE } from '../server/setup.js';
+import { DEFAULT_SETTINGS } from '../shared/constants.js';
 import {
   addDays, addWorkingDays, onOrNextWorkingDay, isWorkingDay, localDate, zonedToUtc, zonedParts,
 } from '../shared/dates.js';
@@ -242,6 +243,12 @@ export function buildSampleData() {
   migrate();
   resetSettingsCache();
   ensureDropdownDefaults();
+  // The tests cover every module and rule, including those a new installation starts with switched off.
+  setSetting('modules', Object.fromEntries(Object.keys(DEFAULT_SETTINGS.modules).map((k) => [k, true])));
+  setSetting('approvals', { ...DEFAULT_SETTINGS.approvals, enabled: true });
+  setSetting('access', { ...DEFAULT_SETTINGS.access, coordinatorMode: true });
+  setSetting('reminders', { ...DEFAULT_SETTINGS.reminders, repeatOrderEnabled: true, managementSummaries: true });
+  resetSettingsCache();
   rnd = mulberry32(20261117);
   const started = Date.now();
 
@@ -372,7 +379,7 @@ export function buildSampleData() {
         billing_address: `${pick(['Plot', 'Unit', 'Gala'])} ${int(2, 140)}, ${pick(['MIDC', 'GIDC', 'Industrial Estate', 'Free Zone', 'Industrial Area'])}, ${city}${state ? `, ${state}` : ''}`,
         payment_terms: export_ ? '30% advance, balance against documents' : pick(['30 days from invoice', '45 days from invoice', '100% against proforma before dispatch']),
         payment_terms_days: export_ ? 45 : pick([30, 30, 45]), credit_limit: pattern === 'regular' && !export_ ? String(int(10, 40) * 100000) : undefined, credit_currency: 'INR',
-        acquisition_source: pattern === 'new' ? pick(['website', 'exhibition', 'dealer_referral']) : pattern === 'lost' ? pick(['website', 'email', 'outbound']) : pick(['exhibition', 'dealer_referral', 'field_visit', 'outbound', 'website']),
+        acquisition_source: pattern === 'new' ? pick(['online_portal', 'exhibition', 'dealer_referral']) : pattern === 'lost' ? pick(['online_portal', 'email', 'outbound']) : pick(['exhibition', 'dealer_referral', 'field_visit', 'outbound', 'online_portal']),
         website: `www.${name.toLowerCase().replace(/[^a-z]+/g, '').slice(0, 14)}.example`,
       }, u, { skipDuplicateCheck: true });
       C[name] = id;
@@ -395,8 +402,8 @@ export function buildSampleData() {
   });
 
   // ---------------------------------------------------------------- deal simulation
-  const SOURCES_DOM = [['existing_customer', 30], ['website', 15], ['whatsapp', 15], ['email', 15], ['exhibition', 8], ['field_visit', 8], ['dealer_referral', 6], ['outbound', 3]];
-  const SOURCES_EXP = [['existing_customer', 25], ['email', 30], ['whatsapp', 15], ['exhibition', 15], ['dealer_referral', 10], ['website', 5]];
+  const SOURCES_DOM = [['existing_customer', 30], ['online_portal', 15], ['whatsapp', 15], ['email', 15], ['exhibition', 8], ['field_visit', 8], ['dealer_referral', 6], ['outbound', 3]];
+  const SOURCES_EXP = [['existing_customer', 25], ['email', 30], ['whatsapp', 15], ['exhibition', 15], ['dealer_referral', 10], ['online_portal', 5]];
   const LOST = [['price', 30], ['delivery_time', 20], ['competitor', 14], ['spec_mismatch', 9], ['project_postponed', 9], ['no_response', 8], ['certification', 4], ['unknown', 6]];
   const DELAYS = [['raw_material', 40], ['staff_shortage', 10], ['machine_tool', 10], ['technical_clarification', 10], ['quality_rework', 10], ['other_work', 10], ['customer_approval', 6], ['payment_hold', 4]];
   const ACTION_OWNER = { raw_material: 'suresh', staff_shortage: 'ramesh', machine_tool: 'ramesh', technical_clarification: 'coord', quality_rework: 'meena', other_work: 'ramesh', customer_approval: null, payment_hold: 'neha' };
@@ -768,7 +775,7 @@ export function buildSampleData() {
   }));
   // Nova Panels: quotation closed with no reason given — ask why they did not proceed.
   on(D(-125), () => as('saurav', (u) => {
-    const res = safe('nova enq', () => createEnquiry({ customer_id: C['Nova Panels'], owner_id: U.saurav, source_code: 'website', lines: [{ product_id: P['VIPS 83P'].id, qty: 80, unit: 'pcs' }] }, u));
+    const res = safe('nova enq', () => createEnquiry({ customer_id: C['Nova Panels'], owner_id: U.saurav, source_code: 'online_portal', lines: [{ product_id: P['VIPS 83P'].id, qty: 80, unit: 'pcs' }] }, u));
     if (res) startPath({ cid: C['Nova Panels'], enquiryId: res.id, ownerK: 'saurav', forceOutcome: 'lost', lostReason: 'unknown' });
   }));
 
@@ -1001,12 +1008,12 @@ export function buildSampleData() {
         insert('exhibition_visits', { campaign_id: cp.id, customer_id: c.id, visited_on: showDay(), met_by: c.owner_id, interest, notes, outcome, created_by: c.owner_id, created_at: stamp, updated_at: stamp });
       }
     }
-    // Opportunity details on open enquiries (estimate, probability, temperature, expected decision).
+    // Opportunity details on open enquiries (estimate, probability, expected decision).
     for (const e of all("SELECT e.id, e.stage, c.segment FROM enquiries e JOIN customers c ON c.id = e.customer_id WHERE e.stage IN ('new','clarification','quote_to_prepare','quote_sent','awaiting_decision','on_hold')")) {
       const est = get(`SELECT SUM(COALESCE(el.qty, 50) * COALESCE(p.standard_price_minor, 150000)) AS v FROM enquiry_lines el LEFT JOIN products p ON p.id = el.product_id WHERE el.enquiry_id = ?`, e.id).v;
       const exportFx = e.segment === 'export';
       update('enquiries', e.id, {
-        est_value_minor: exportFx ? Math.round((est || 0) / 83) : est, est_currency: exportFx ? 'USD' : 'INR', temperature: pick(['hot', 'warm', 'warm', 'cold']),
+        est_value_minor: exportFx ? Math.round((est || 0) / 83) : est, est_currency: exportFx ? 'USD' : 'INR',
         probability: chance(0.4) ? pick([25, 40, 50, 60, 75]) : null, expected_decision_date: e.stage === 'on_hold' ? null : addDays(END, int(3, 85)),
       });
     }

@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { all, get, run, insert } from './db.js';
-import { DEFAULT_SETTINGS } from '../shared/constants.js';
+import { DEFAULT_SETTINGS, COUNTRIES } from '../shared/constants.js';
 import { localDate, isDate, isInstant, isTime } from '../shared/dates.js';
 import { round3 } from '../shared/rules.js';
 
@@ -210,10 +210,7 @@ export function normEmail(s) {
   const e = String(s || '').trim().toLowerCase();
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) ? e : null;
 }
-const DIAL = {
-  IN: '91', AE: '971', SA: '966', OM: '968', QA: '974', KW: '965', BH: '973', KE: '254', NG: '234', TZ: '255', EG: '20', ZA: '27',
-  BD: '880', LK: '94', NP: '977', SG: '65', MY: '60', GB: '44', US: '1', DE: '49',
-};
+const DIAL = Object.fromEntries(COUNTRIES.map((c) => [c.value, c.dial]));
 /** International format when the country is known; digits only (no guessed code) when it is not. */
 export function normPhone(raw, country) {
   const s = String(raw || '').trim();

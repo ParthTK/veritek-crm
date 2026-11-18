@@ -69,6 +69,13 @@ try {
   const meta = (await json('/meta', { auth: token })).data || {};
   log(meta.regions?.length === 5 && meta.factories?.length === 0, 'five sales regions and no factories', `${meta.regions?.length} / ${meta.factories?.length}`);
   log(((await json('/object-categories', { auth: token })).data || []).length === 4, 'four starter object categories');
+  const modules = Object.entries(meta.settings?.modules || {});
+  log(modules.length > 0 && modules.every(([, on]) => !on), 'the modules kept for later versions start switched off', modules.filter(([, on]) => on).map(([k]) => k).join(', '));
+  log(meta.settings?.approvals?.enabled === false && meta.settings?.access?.coordinatorMode === false, 'quotations need no internal approval and updates need no named source');
+  const on = await json('/admin/settings/modules', { method: 'PUT', auth: token, body: { payments: true } });
+  const after = (await json('/meta', { auth: token })).data?.settings?.modules || {};
+  log(on.status === 200 && after.payments === true && after.complaints === false, 'an administrator can switch one of them on, and only that one', JSON.stringify(after));
+  await json('/admin/settings/modules', { method: 'PUT', auth: token, body: { payments: false } });
 } catch (err) {
   log(false, err.message);
 }
@@ -86,7 +93,7 @@ try {
   const rowsOf = async (sql) => (await pg.query(sql)).rows;
   const one = async (sql) => Object.values((await rowsOf(sql))[0])[0];
   const db = { close: () => pg.close() };
-  // audit_events and sessions hold this test's own sign-in and password change.
+  // audit_events and sessions hold this test's own sign-in, password change and module switch.
   const SETUP = new Set(['users', 'regions', 'product_categories', 'products', 'product_options', 'object_categories', 'settings', 'dropdown_options', 'schema_migrations', 'sessions', 'audit_events']);
   const tables = (await rowsOf("SELECT tablename FROM pg_tables WHERE schemaname = current_schema() ORDER BY tablename")).map((t) => t.tablename);
   const filled = [];
@@ -98,7 +105,7 @@ try {
   log(unexpected.length === 0, 'no sample records in any other table', unexpected.map(([t, n]) => `${t}: ${n}`).join(', '));
   log((await one('SELECT COUNT(*) AS n FROM users')) === 1, 'exactly one account');
   const actions = (await rowsOf('SELECT DISTINCT action FROM audit_events ORDER BY action')).map((a) => a.action).join(', ');
-  log(actions === 'password_change, sign_in', 'the audit trail holds only this sign-in and password change', actions);
+  log(actions === 'password_change, sign_in, update_modules', 'the audit trail holds only this sign-in, password change and module switch', actions);
   log((await one('SELECT COUNT(*) AS n FROM product_options WHERE price_delta_minor <> 0 OR cost_delta_minor <> 0')) === 0, 'configurator options carry no price or cost changes');
   log(fs.readdirSync(path.join(dataDir, 'files')).length === 0, 'no documents in the file store');
   // The website's WhatsApp product finder reads these three columns with this query (docs/schema.md).
@@ -106,6 +113,8 @@ try {
   log(cols.phone === 'text' && cols.role === 'text' && cols.active === 'bigint', "users keeps phone (text), role (text) and active (1 / 0) for the website", JSON.stringify(cols));
   const finder = (await pg.query('SELECT phone FROM users WHERE active = 1 AND role = ANY($1::text[]) AND phone IS NOT NULL', [['super_admin', 'management']])).rows;
   log(finder.length === 0, "the website's administrator query runs; the first administrator has no phone yet", JSON.stringify(finder));
+  log((await one("SELECT COUNT(*) AS n FROM dropdown_options WHERE category = 'enquiry_source' AND code = 'website'")) === 0, 'Website is not an enquiry source');
+  log((await one("SELECT COUNT(*) AS n FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'enquiries' AND column_name = 'temperature'")) === 0, 'enquiries have no temperature column');
   console.log(`(set-up tables in use: ${filled.map(([t, n]) => `${t} ${n}`).join(', ')})`);
   await db.close();
 } catch (err) {
