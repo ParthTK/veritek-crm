@@ -16,6 +16,8 @@ For the super administrator and management. Everything here is in the web app; n
   - **Production / Service**: tick *May see commercial values* only if they need prices.
   - **Named owner (no sign-in)**: department people who own actions but do not log in; the coordinator records
     their updates.
+  - **Super admin / Management**: their phone is their WhatsApp number with country code (e.g. +91 98200 11111);
+    from it they get product files (datasheets, manuals, diagrams) on +91 97694 90155.
 - **Reset password**: edit the person and enter a new first password (they must change it at sign-in).
 - **Deactivate** when someone leaves: their open customers, enquiries, tasks, orders and complaints must be
   reassigned first; sign-in stops at once; their name stays on every past record.

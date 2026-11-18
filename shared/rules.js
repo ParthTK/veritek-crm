@@ -5,6 +5,31 @@ import { PHASES } from './constants.js';
 export const round3 = (n) => Math.round((Number(n) || 0) * 1000) / 1000;
 const EPS = 0.0005;
 
+// ------------------------------------------------------------------ WhatsApp numbers (website product finder)
+/**
+ * A phone field the way the website's product finder reads it (keep identical to normalizePhone in the
+ * website's admin-portal/server/product-finder.js): digits only, a leading 00 dropped, a leading 0 dropped from
+ * 11 digits, ten digits taken as an Indian mobile (+91). A full number has 11–15 digits; anything else gives ''.
+ */
+export function whatsappNumber(raw) {
+  let digits = String(raw ?? '').replace(/\D/g, '');
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  if (digits.length === 11 && digits.startsWith('0')) digits = digits.slice(1);
+  if (digits.length === 10) digits = `91${digits}`;
+  return digits.length >= 11 && digits.length <= 15 ? digits : '';
+}
+
+/** The numbers in one phone field, which may hold several separated by , ; / or "or". Parts without a digit are labels. */
+export const phoneParts = (field) => String(field ?? '').split(/[,;/]|\bor\b/i).map((p) => p.trim()).filter((p) => /\d/.test(p));
+
+/** Why an administrator's phone would not reach the product finder (every number in it must), or null. */
+export function finderPhoneProblem(field) {
+  const parts = phoneParts(field);
+  const bad = parts.filter((p) => !whatsappNumber(p));
+  if (!parts.length || bad.length === parts.length) return 'Enter a mobile number with country code, e.g. +91 98200 11111';
+  return bad.length ? `“${bad[0]}” is not a full mobile number — give each number with its country code` : null;
+}
+
 // ------------------------------------------------------------------ quantities
 /**
  * Line-level quantity model:

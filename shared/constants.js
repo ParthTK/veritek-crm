@@ -33,6 +33,13 @@ export const roleRank = (role) => ROLES.find((r) => r.value === role)?.rank ?? 0
 export const rolesInGroup = (...groups) => ROLES.filter((r) => groups.includes(r.group)).map((r) => r.value);
 export const loginRole = (role) => Boolean(ROLES.find((r) => r.value === role)?.login);
 
+// The website's WhatsApp product finder: a message to this number from an ACTIVE user with one of these roles
+// gets product files instead of the customer chat. The website reads crm.users (phone, role, active) itself,
+// with these exact role values, so they are an interface: keep them, the phone column and active = 1 / 0 as
+// they are (docs/schema.md). The phone rules are in rules.js (whatsappNumber).
+export const PRODUCT_FINDER_ROLES = ['super_admin', 'management'];
+export const PRODUCT_FINDER_WHATSAPP = '+91 97694 90155';
+
 export const DEPARTMENTS = [
   opt('management', 'Management'),
   opt('coordination', 'Coordination'),

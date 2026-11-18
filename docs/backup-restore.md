@@ -62,6 +62,9 @@ accounts):
 3. Run `npm run restore -- backups/backup-<time>/` with the same environment variables as the service.
 4. Start the CRM against the restored schema, sign in as an administrator and check Settings → System &
    backups and a few recent records. Keep the old schema until you are satisfied, then remove it.
+5. The website reads `crm.users` by that name (administrators' WhatsApp numbers; see [schema.md](schema.md)),
+   and a new schema does not have its grant. Once the restored data is in the schema named `crm`, run the
+   website's `admin-portal/schema/finder.sql` again as `postgres`.
 
 Recovery targets proposed by the specification: at most 24 hours of data loss and restoration within one
 working day — met by the daily backups plus this procedure.

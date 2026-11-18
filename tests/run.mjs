@@ -48,6 +48,7 @@ try {
   await run(['tests/journey.mjs'], { quiet: false });
   await run(['tests/objects.mjs'], { quiet: false });
   await run(['tests/flow.mjs'], { quiet: false });
+  await run(['tests/people.mjs'], { quiet: false });
   await run(['tests/sweep.mjs'], { quiet: false });
   await run(['tests/baseline.mjs'], { quiet: false }); // its own server and data folder
   code = 0;

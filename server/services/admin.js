@@ -5,8 +5,9 @@ import {
   Check, badRequest, conflict, notFound, nowIso, str, intId, bool, audit, history, setSetting, settings, resetDropdownCache, dropdowns, normEmail,
 } from '../util.js';
 import { hashPassword, passwordProblem, destroyUserSessions } from '../auth.js';
-import { ROLES, DEPARTMENTS, DROPDOWNS, DEFAULT_SETTINGS, OPEN_ENQUIRY_STAGES, CURRENCIES, TAG_COLORS } from '../../shared/constants.js';
+import { ROLES, DEPARTMENTS, DROPDOWNS, DEFAULT_SETTINGS, OPEN_ENQUIRY_STAGES, CURRENCIES, TAG_COLORS, PRODUCT_FINDER_ROLES } from '../../shared/constants.js';
 import { isDate, isTime } from '../../shared/dates.js';
+import { finderPhoneProblem } from '../../shared/rules.js';
 import { requireActiveUser } from './people.js';
 import { reconcileQuantities } from './orders.js';
 import { listBackups } from './backup.js';
@@ -108,8 +109,19 @@ export function listUsers() {
     FROM users u LEFT JOIN users m ON m.id = u.manager_id ORDER BY u.active DESC, u.name`);
 }
 
-function validateUser(c, input, { creating, id } = {}) {
+// users.phone, role and active are read by the website: active super admins and management get product files
+// on its WhatsApp number (PRODUCT_FINDER_ROLES). Keep those columns and values as they are; see docs/schema.md.
+function validateUser(c, input, { creating, id, cur } = {}) {
   if (creating || input.name !== undefined) c.text('name', input.name, { required: true, max: 120, label: 'Name' });
+  // An administrator's phone (optional) must give a number the website can match, as saved (create keeps 40
+  // characters, edit 120). Other roles' phones are saved as typed, unchecked.
+  const role = creating ? input.role || 'staff' : input.role ?? cur?.role;
+  const phone = input.phone !== undefined ? input.phone : cur?.phone;
+  if (PRODUCT_FINDER_ROLES.includes(role) && str(phone)) {
+    c.text('phone', phone, { max: creating ? 40 : 120, label: 'Phone' });
+    const problem = finderPhoneProblem(phone);
+    if (problem) c.fail('phone', problem);
+  }
   if (input.role !== undefined && !ROLES.some((r) => r.value === input.role)) c.fail('role', 'Choose a role');
   if (input.department && !DEPARTMENTS.some((d) => d.value === input.department)) c.fail('department', 'Choose a department');
   const login = input.role ? ROLES.find((r) => r.value === input.role)?.login : undefined;
@@ -150,7 +162,7 @@ export function updateUser(id, input, user) {
   const cur = get('SELECT * FROM users WHERE id = ?', id);
   if (!cur) throw notFound('User');
   const c = new Check();
-  validateUser(c, input, { id });
+  validateUser(c, input, { id, cur });
   if (input.role && ROLES.find((r) => r.value === input.role)?.login && !cur.password_hash && !input.password) c.fail('password', 'Set a first password for sign-in');
   if (input.password) {
     const problem = passwordProblem(input.password, input.email || cur.email);

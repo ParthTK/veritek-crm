@@ -13,8 +13,11 @@ next to the website and portal.
 | Runtime identity | Service account | `veritek-crm-run@veritek-513405.iam.gserviceaccount.com` |
 
 The CRM's database user owns only the `crm` schema. It has no rights on the website's (`public`) or portal's
-(`portal`) tables, and their users have none on the CRM's. The Cloud SQL instance stays closed to the
-internet: Cloud Run reaches it through the built-in Cloud SQL connection (IAM-authorised).
+(`portal`) tables. Their users have no rights on the CRM's tables, with one exception: the website may read
+three columns of `crm.users` (phone, role and active), to recognise administrators on its WhatsApp number (see
+[schema.md](schema.md)). That grant comes from the website's `admin-portal/schema/finder.sql`, run as
+`postgres`; this works because `postgres` is a member of `veritek_crm` (step 3). The Cloud SQL instance stays
+closed to the internet: Cloud Run reaches it through the built-in Cloud SQL connection (IAM-authorised).
 
 Cloud Run runs **one instance at most** (the CRM handles one database statement at a time) and scales to
 zero when idle, so the first request after a quiet spell takes a few seconds.

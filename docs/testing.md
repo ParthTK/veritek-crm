@@ -52,6 +52,16 @@ and rejected; confirmation, advance, production and dispatch, with the sales pip
 production board checked at each step; every stuck deal states a reason; scope and hidden values by role; QR
 data kept out of customer and order records.
 
+### People & access (`tests/people.mjs`)
+
+An administrator's phone is the number the website's WhatsApp product finder recognises. The suite checks
+that the phone rules match the website's (digits only; a leading 00 or a leading 0 dropped; ten digits are
+Indian; 11–15 digits; several numbers separated by , ; / or "or"). Super admin and Management phones that are
+not full numbers are refused on the phone field, the phone stays optional, other roles' phones are saved as
+typed, and promoting someone checks the phone they already have. The clean-installation test
+(`tests/baseline.mjs`) also checks that `users` keeps the phone, role and active columns the website reads, and
+that the website's query against them runs.
+
 ### Endpoint sweep (`tests/sweep.mjs`)
 
 Calls every read endpoint, report and export as several roles and fails on any server error.

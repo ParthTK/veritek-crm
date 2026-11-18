@@ -1,6 +1,7 @@
 // Clean installation (CRM_NO_DEMO=1): starts the server on an empty throwaway data folder and checks that
 // it holds no demo records — only the reference set-up (regions, product models without prices, object
-// categories, settings, dropdowns) and one administrator who must change the password at first sign-in.
+// categories, settings, dropdowns) and one administrator who must change the password at first sign-in. Also
+// checks the part of the schema the website reads (users: phone, role, active) as production starts.
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -100,6 +101,11 @@ try {
   log(actions === 'password_change, sign_in', 'the audit trail holds only this sign-in and password change', actions);
   log((await one('SELECT COUNT(*) AS n FROM product_options WHERE price_delta_minor <> 0 OR cost_delta_minor <> 0')) === 0, 'configurator options carry no price or cost changes');
   log(fs.readdirSync(path.join(dataDir, 'files')).length === 0, 'no documents in the file store');
+  // The website's WhatsApp product finder reads these three columns with this query (docs/schema.md).
+  const cols = Object.fromEntries((await rowsOf("SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'users' AND column_name IN ('phone', 'role', 'active')")).map((c) => [c.column_name, c.data_type]));
+  log(cols.phone === 'text' && cols.role === 'text' && cols.active === 'bigint', "users keeps phone (text), role (text) and active (1 / 0) for the website", JSON.stringify(cols));
+  const finder = (await pg.query('SELECT phone FROM users WHERE active = 1 AND role = ANY($1::text[]) AND phone IS NOT NULL', [['super_admin', 'management']])).rows;
+  log(finder.length === 0, "the website's administrator query runs; the first administrator has no phone yet", JSON.stringify(finder));
   console.log(`(set-up tables in use: ${filled.map(([t, n]) => `${t} ${n}`).join(', ')})`);
   await db.close();
 } catch (err) {

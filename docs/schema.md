@@ -36,3 +36,18 @@ Conventions used throughout:
 
 Derived values (remaining quantity, line state, freshness, outstanding balance, ageing bucket) are computed
 from these events when read, so reports and screens always agree.
+
+## Read by another system: `users` (phone, role, active)
+
+The website's WhatsApp product finder works out who is an administrator from the CRM's own table. It runs
+`select phone from crm.users where active = 1 and role in ('super_admin', 'management') and phone is not null`
+every 5 minutes. Its database user may read only these three columns, granted by the website's
+`admin-portal/schema/finder.sql`, which is run as `postgres`. Treat them as an interface:
+
+- Keep `phone` (text), `role` and `active` as they are, including the role values `super_admin` and
+  `management` and the meaning of `active` (1 = active, 0 = deactivated). Moving the number to another column
+  needs a matching change in the website.
+- Change `users` only with plain `ALTER TABLE`. Never drop and recreate it, and never add a `REVOKE` or a
+  default-privilege change that removes other roles' access to it.
+- Dropping the table loses the website's grant, and so do `npm run seed -- --reset --yes` and a restore into a
+  fresh schema. Afterwards, run `finder.sql` again.

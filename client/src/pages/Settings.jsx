@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ROLES, DEPARTMENTS, PERMISSIONS as P, PERMISSION_LABELS, CURRENCIES, TAG_COLORS, SEGMENTS, labelOf, groupOf } from '@shared/constants.js';
+import { ROLES, DEPARTMENTS, PERMISSIONS as P, PERMISSION_LABELS, CURRENCIES, TAG_COLORS, SEGMENTS, PRODUCT_FINDER_ROLES, PRODUCT_FINDER_WHATSAPP, labelOf, groupOf } from '@shared/constants.js';
+import { finderPhoneProblem } from '@shared/rules.js';
 import { api, downloadAuthed, newKey } from '../api.js';
 import { useAuth } from '../auth.jsx';
 import { useApi, useUrlFilters, useSave } from '../lib/hooks.js';
@@ -53,7 +54,7 @@ function People() {
       <Notice tone="info">Each person has their own account — there is no shared login. Department heads who do not sign in can still be named owners of actions; the coordinator records updates on their behalf.</Notice>
       <Card flush title="People" actions={<Button variant="cta" icon="plus" onClick={() => setModal({ type: 'edit' })}>Add person</Button>}>
         <DataTable rows={data} columns={[
-          { key: 'name', label: 'Name', render: (u) => <><strong>{u.name}</strong>{!u.active && <Badge size="sm"> Deactivated {date(u.deactivated_at)}</Badge>}<div className="sub">{u.email || 'no sign-in'}</div></> },
+          { key: 'name', label: 'Name', render: (u) => <><strong>{u.name}</strong>{!u.active && <Badge size="sm"> Deactivated {date(u.deactivated_at)}</Badge>}<div className="sub">{u.email || 'no sign-in'}</div>{u.active && PRODUCT_FINDER_ROLES.includes(u.role) ? <FinderPhone phone={u.phone} /> : null}</> },
           { key: 'role', label: 'Role', render: (u) => <>{labelOf(ROLES, u.role)}{u.values_access ? <div className="sub">may see commercial values</div> : null}</> },
           { key: 'dept', label: 'Department', render: (u) => <>{labelOf(DEPARTMENTS, u.department) || '—'}{u.designation && <div className="sub">{u.designation}</div>}</> },
           { key: 'where', label: 'Region / factory', render: (u) => u.region_name || u.factory_name || <span className="muted">—</span> },
@@ -74,6 +75,14 @@ function People() {
   );
 }
 
+/** Under an active administrator's name: whether the website's WhatsApp product finder knows their number. */
+function FinderPhone({ phone }) {
+  const title = `From this number they get product files on ${PRODUCT_FINDER_WHATSAPP}`;
+  if (!phone) return <div className="sub">No phone, so no product files on WhatsApp</div>;
+  if (finderPhoneProblem(phone)) return <div className="sub"><span className="warning-text">{phone}: not a full mobile number, so no product files</span></div>;
+  return <div className="sub" title={title}>Product files on WhatsApp: {phone}</div>;
+}
+
 function UserForm({ user, onSaved }) {
   const save = useSave();
   const meta = useMeta();
@@ -90,7 +99,7 @@ function UserForm({ user, onSaved }) {
         <Field label="Sales region" required={f.role === 'regional_manager'} optional={f.role !== 'regional_manager'} error={save.fields.region_id} hint={f.role === 'regional_manager' ? 'They see customers in this region' : undefined}><Select value={f.region_id} onChange={(e) => setF({ ...f, region_id: e.target.value })} placeholder="None" options={meta.regions.map((r) => ({ value: String(r.id), label: r.name }))} /></Field>
         <Field label="Factory" optional error={save.fields.factory_id} hint={groupOf(f.role) === 'production' ? 'Production and QC see orders for this factory' : undefined}><Select value={f.factory_id} onChange={(e) => setF({ ...f, factory_id: e.target.value })} placeholder="None" options={meta.factories.map((x) => ({ value: String(x.id), label: x.name }))} /></Field>
         <Field label="Email" required={login} error={save.fields.email}><Input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
-        <Field label="Phone" optional><Input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
+        <Field label="Phone" optional error={save.fields.phone} hint={PRODUCT_FINDER_ROLES.includes(f.role) ? `Their WhatsApp number, with country code, e.g. +91 98200 11111. From this number they get product files on ${PRODUCT_FINDER_WHATSAPP}.` : undefined}><Input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
         {login && <Field label={user ? 'Reset password' : 'First password'} required={!user} error={save.fields.password} hint="They must change it at first sign-in" className="full"><Input type="password" autoComplete="new-password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} /></Field>}
         {['production', 'service'].includes(groupOf(f.role)) && <div className="full"><Checkbox label="May see commercial values (prices and order values)" checked={f.values_access} onChange={(v) => setF({ ...f, values_access: v })} /></div>}
       </div>
