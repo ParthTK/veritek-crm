@@ -8,7 +8,7 @@ import { useAuth } from '../auth.jsx';
 import { useApi, useSave } from '../lib/hooks.js';
 import { date, dateTime, number, pct, qty as fmtQty, money } from '../lib/format.js';
 import {
-  Badge, Button, Card, ErrorState, Facts, Field, Modal, Notice, PageHeader, SaveStatus, Select, Spinner, Tabs, Textarea, useConfirm, useToast, EmptyState,
+  Badge, Button, Card, ErrorState, Facts, Field, Logo, Modal, Notice, PageHeader, SaveStatus, Select, Spinner, Tabs, Textarea, useConfirm, useToast, EmptyState,
 } from '../components/ui.jsx';
 import { ApprovalBadge, Money, QuoteBadge, StageBadge, useMeta } from '../components/domain.jsx';
 import Icon from '../components/Icon.jsx';
@@ -255,8 +255,7 @@ export function QuoteDocument({ q, r, company }) {
     <div className="doc">
       <div className="row between top wrap" style={{ gap: 16 }}>
         <div>
-          <div className="brand-name" style={{ color: 'var(--heading)', fontSize: 20 }}><span className="slash" aria-hidden style={{ width: 8, height: 20, background: 'var(--cta)', display: 'inline-block', transform: 'skewX(-18deg)', borderRadius: 2 }} />{company.short || 'VERITEK'}</div>
-          <div className="small strong">{company.name}</div>
+          <Logo plate height={50} className="doc-logo" />
           {company.address && <div className="tiny muted" style={{ maxWidth: 320 }}>{company.address}</div>}
           <div className="tiny muted">{[company.phone, company.email, company.website].filter(Boolean).join(' · ')}</div>
           {company.gstin && <div className="tiny muted">GSTIN {company.gstin}</div>}

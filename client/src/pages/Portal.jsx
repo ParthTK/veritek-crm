@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../api.js';
 import { date, dateTime, money, number, qty as fmtQty } from '../lib/format.js';
-import { Badge, Button, Card, Facts, Field, Input, Notice, Spinner, Textarea, useToast } from '../components/ui.jsx';
+import { Badge, Button, Card, Facts, Field, Input, Logo, Notice, Spinner, Textarea, useToast } from '../components/ui.jsx';
 import { JourneyStepper } from '../components/domain.jsx';
 import Icon from '../components/Icon.jsx';
 
@@ -13,11 +13,8 @@ function PortalShell({ company, title, subtitle, children }) {
     <div className="portal">
       <div className="row between wrap" style={{ marginBottom: 20, gap: 12 }}>
         <div>
-          <div className="brand-name" style={{ color: 'var(--heading)', fontSize: 20 }}>
-            <span aria-hidden style={{ width: 8, height: 20, background: 'var(--cta)', display: 'inline-block', transform: 'skewX(-18deg)', borderRadius: 2 }} />
-            {company?.name}
-          </div>
-          {company?.address && <div className="small muted" style={{ marginTop: 4, maxWidth: 420 }}>{company.address}</div>}
+          <Logo plate height={46} />
+          {company?.address && <div className="small muted" style={{ marginTop: 8, maxWidth: 420 }}>{company.address}</div>}
         </div>
         <div className="small muted" style={{ textAlign: 'right' }}>
           {company?.phone && <div>{company.phone}</div>}

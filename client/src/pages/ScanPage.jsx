@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../api.js';
 import { date, fileSize } from '../lib/format.js';
-import { Button, Field, Input, Notice, Spinner, useToast } from '../components/ui.jsx';
+import { Button, Field, Input, Logo, Notice, Spinner, useToast } from '../components/ui.jsx';
 import Icon from '../components/Icon.jsx';
 
 const KIND_ICON = { pdf: 'file', image: 'eye', sheet: 'reports', csv: 'reports', doc: 'note', text: 'note', video: 'video', audio: 'mic', download: 'download' };
@@ -172,7 +172,7 @@ function renderValue(f) {
 function Shell({ brand, children }) {
   return (
     <div className="scan-shell" style={brand.color ? { '--accent': brand.color } : undefined}>
-      <div className="scan-brand">{brand.name}</div>
+      <div className="scan-brand"><Logo plate height={38} /></div>
       {children}
       <div className="scan-contact">
         {brand.phone && <a href={`tel:${brand.phone.replace(/\s/g, '')}`}>{brand.phone}</a>}

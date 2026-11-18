@@ -5,7 +5,7 @@ import { api } from '../api.js';
 import { useAuth } from '../auth.jsx';
 import { timeAgo } from '../lib/format.js';
 import Icon from './Icon.jsx';
-import { Avatar, Button, Popover } from './ui.jsx';
+import { Avatar, Button, Logo, Popover } from './ui.jsx';
 import { useMeta } from './domain.jsx';
 import { useQuickEntry } from './QuickEntry.jsx';
 
@@ -197,9 +197,8 @@ export default function Layout({ children }) {
     <div className={`app ${navOpen ? 'nav-open' : ''}`}>
       {navOpen && <div className="scrim" onClick={() => setNavOpen(false)} />}
       <aside className="sidebar" aria-label="Main navigation">
-        <Link to="/" className="brand">
-          <div className="brand-name"><span className="slash" aria-hidden />{meta.settings.company.short || 'VERITEK'}</div>
-          <div className="brand-sub">{meta.settings.company.name.replace(/^Veritek /, '')}</div>
+        <Link to="/" className="brand" aria-label={`${meta.settings.company.name} — overview`}>
+          <Logo plate width="100%" />
         </Link>
         <nav className="nav">
           {NAV.map((section) => {

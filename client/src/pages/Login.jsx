@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { useAuth } from '../auth.jsx';
-import { Button, Field, Input, Notice, Checkbox } from '../components/ui.jsx';
+import { Button, Field, Input, Notice, Checkbox, Logo } from '../components/ui.jsx';
 
 const DEMO = [
   ['admin@veritek.example', 'Super admin'],
@@ -49,7 +49,7 @@ export default function Login() {
   return (
     <div className="login-page">
       <div className="login-art">
-        <div className="brand-name" style={{ color: '#fff' }}><span className="slash" aria-hidden />VERITEK</div>
+        <div><Logo plate height={52} /></div>
         <div>
           <h1>Customer & order control, one record at a time.</h1>
           <ul style={{ paddingLeft: 18, lineHeight: 1.6 }}>
@@ -62,6 +62,7 @@ export default function Login() {
         <div className="small" style={{ opacity: 0.75 }}>Veritek Engineering Private Limited</div>
       </div>
       <div className="login-panel">
+        <div className="login-logo"><Logo plate height={40} /></div>
         <div>
           <h1>Sign in</h1>
           <div className="muted">Use your own account — there is no shared login.</div>

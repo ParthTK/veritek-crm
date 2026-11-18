@@ -53,6 +53,16 @@ export function Badge({ tone = 'slate', children, icon, size, title }) {
   );
 }
 
+/**
+ * The Veritek logo from veritekindia.com. The artwork has a white background, so on coloured or dark
+ * surfaces it sits on a white plate. Give a height, or a width (e.g. '100%') to fill a container.
+ */
+export function Logo({ height = 40, width, plate = false, className = '' }) {
+  const style = width ? { width, height: 'auto' } : { height, width: 'auto' };
+  const img = <img src="/brand/veritek-logo.png" alt="Veritek Engineering Private Limited" className="logo" style={style} />;
+  return <span className={`${plate ? 'logo-plate' : 'logo-wrap'} ${className}`}>{img}</span>;
+}
+
 export function Avatar({ name }) {
   return <span className="avatar" title={name}>{initials(name)}</span>;
 }
