@@ -27,7 +27,7 @@ export const TEMPLATES = {
       col('city', 'City', 'City', 'Sharjah'),
       col('segment', 'Domestic / export', '"domestic" or "export". Blank = not classified (never guessed from the phone)', 'export'),
       col('types', 'Customer types', 'manufacturer; oem; dealer; distributor; end_user; other (separated by ;)', 'oem'),
-      col('owner_email', 'Owner email', 'Email of the accountable owner in this system. Blank = the importer', 'saurav@veritek.example'),
+      col('owner_email', 'Owner email', 'Email of the accountable owner in this system. Blank = the importer', 'name@veritekindia.com'),
       col('contact_name', 'Contact name', 'Main contact person', 'Rashid Ali'),
       col('contact_role', 'Contact role', 'Designation', 'Purchase Manager'),
       col('phone', 'Phone', 'With country code if possible', '+971 50 123 4567'),
@@ -52,7 +52,7 @@ export const TEMPLATES = {
       col('received_date', 'Received date', 'Blank = unknown (kept unknown, not set to the import date)', '02/11/2026'),
       col('source', 'Source', 'existing_customer, website, whatsapp, email, exhibition, field_visit, dealer_referral, outbound, other, unknown', 'exhibition'),
       col('event', 'Event name', 'Exhibition or campaign name', 'Middle East Energy'),
-      col('owner_email', 'Owner email', 'Accountable owner', 'kavya@veritek.example'),
+      col('owner_email', 'Owner email', 'Accountable owner', 'name@veritekindia.com'),
       col('product_code', 'Product code', 'Product master code. Unknown codes are kept as requirement text', 'VIPS 70L'),
       col('requirement', 'Requirement', 'Short description when the product is not known', ''),
       col('qty', 'Quantity', 'Blank = unknown (never defaulted to 1)', '100'),
@@ -73,7 +73,7 @@ export const TEMPLATES = {
       col('customer_name', 'Customer name', 'Used when there is no customer source ID', 'Gulf Panel Co.', true),
       col('po_reference', 'Customer PO', '', 'GP/PO/2026/114'),
       col('received_date', 'Order received date', 'Blank = unknown', '01/11/2026'),
-      col('owner_email', 'Sales owner email', '', 'saurav@veritek.example'),
+      col('owner_email', 'Sales owner email', '', 'name@veritekindia.com'),
       col('product_code', 'Product code', '', 'VIPS 70L'),
       col('description', 'Description / specification', 'Used when the product code is unknown', ''),
       col('qty', 'Confirmed quantity', 'Positive number', '100', true),
@@ -92,10 +92,11 @@ export const TEMPLATES = {
   },
 };
 
+/** The column headings only: no example row, so nothing made-up can be imported by mistake (examples are in the guide). */
 export function templateCsv(type) {
   const t = TEMPLATES[type];
   if (!t) throw notFound('Template');
-  return toCsv(t.columns.map((c) => ({ key: c.key, label: c.key })), [Object.fromEntries(t.columns.map((c) => [c.key, c.example]))]);
+  return toCsv(t.columns.map((c) => ({ key: c.key, label: c.key })), []);
 }
 export function guideCsv(type) {
   const t = TEMPLATES[type];

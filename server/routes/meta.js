@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { all, get, run } from '../db.js';
 import { now, today, tz, settings, dropdowns, intId, nowIso, forbidden, notFound } from '../util.js';
-import { ENV, EPHEMERAL } from '../db.js';
+import { ENV } from '../db.js';
 import { allow, hasPerm } from '../auth.js';
 import { globalSearch } from '../services/queue.js';
 import { listAlerts, acknowledgeAlert } from '../services/alerts.js';
@@ -16,8 +16,6 @@ r.get('/meta', h((req) => {
   return {
     user: req.user,
     env: ENV,
-    demo: EPHEMERAL || process.env.CRM_DEMO === '1',
-    ephemeral: EPHEMERAL,
     now: now().toISOString(),
     today: today(),
     timezone: tz(),

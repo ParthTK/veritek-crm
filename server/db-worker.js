@@ -1,9 +1,8 @@
 // The database worker. It owns the one PostgreSQL connection — Cloud SQL through `pg` in production, or an
-// in-process PGlite (PostgreSQL compiled to WebAssembly) for local use, tests and the demo — and answers the
+// in-process PGlite (PostgreSQL compiled to WebAssembly) for local use and the tests — and answers the
 // main thread's calls one at a time (see db.js, which waits for each answer). It also performs Google Cloud
 // Storage requests for the file store, so those can be called the same way.
 import { workerData, parentPort } from 'node:worker_threads';
-import fs from 'node:fs';
 
 const { port, signal, config } = workerData;
 
@@ -83,11 +82,6 @@ async function openPglite() {
   const { PGlite } = await import('@electric-sql/pglite');
   const { citext } = await import('@electric-sql/pglite/contrib/citext');
   const options = { extensions: { citext }, parsers: PARSERS };
-  // A fresh data folder can start from a snapshot (the demo deployment ships one).
-  if (config.snapshot && config.dataDir && !fs.existsSync(config.dataDir) && fs.existsSync(config.snapshot)) {
-    options.loadDataDir = new Blob([fs.readFileSync(config.snapshot)]);
-    config.restoredFromSnapshot = true;
-  }
   const db = await PGlite.create(config.dataDir ? config.dataDir : 'memory://', options);
   return {
     kind: 'pglite',
@@ -96,11 +90,6 @@ async function openPglite() {
       return { rows: r.rows, rowCount: r.affectedRows ?? 0 };
     },
     exec: async (sql) => { await db.exec(sql); return null; },
-    dump: async (file) => {
-      const blob = await db.dumpDataDir('gzip');
-      fs.writeFileSync(file, Buffer.from(await blob.arrayBuffer()));
-      return file;
-    },
     close: () => db.close(),
   };
 }
@@ -166,10 +155,9 @@ async function handle(msg) {
   if (msg.op === 'gcs') return gcs[msg.fn](...msg.args);
   const b = await opened;
   switch (msg.op) {
-    case 'open': return { kind: b.kind, restoredFromSnapshot: Boolean(config.restoredFromSnapshot) };
+    case 'open': return { kind: b.kind };
     case 'query': return b.query(msg.sql, msg.params);
     case 'exec': return b.exec(msg.sql);
-    case 'dump': return b.dump ? b.dump(msg.file) : null;
     case 'close': await b.close(); return null;
     default: throw new Error(`Unknown database operation ${msg.op}`);
   }

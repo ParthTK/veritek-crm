@@ -1,5 +1,4 @@
-// The Express app. `server/index.js` runs it as a normal server; `api/index.js` exports it as a
-// serverless function for the demo deployment.
+// The Express app, run by `server/index.js`.
 import express from 'express';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -32,14 +31,9 @@ import pipelineRoutes from './routes/pipeline.js';
 migrate();
 ensureDropdownDefaults();
 if (!val('SELECT COUNT(*) FROM users')) {
-  const { seed, seedBaseline } = await import('./seed.js');
-  if (process.env.CRM_NO_DEMO === '1') {
-    console.log('Empty database: setting up a clean installation…');
-    seedBaseline();
-  } else {
-    console.log('Empty database: loading demo data…');
-    seed();
-  }
+  const { cleanInstallation } = await import('./setup.js');
+  console.log('Empty database: setting up a clean installation…');
+  cleanInstallation();
 }
 
 const app = express();

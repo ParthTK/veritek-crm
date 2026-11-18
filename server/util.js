@@ -28,7 +28,7 @@ export function withContext(values, fn) {
 }
 
 // ------------------------------------------------------------------ clock
-// The demo-data generator pins the clock; otherwise it is real time.
+// The tests' sample-data generator pins the clock; otherwise it is real time.
 let pinned = null;
 export function setClock(value) {
   pinned = value ? new Date(value).getTime() : null;

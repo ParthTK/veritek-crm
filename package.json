@@ -13,9 +13,7 @@
     "dev:client": "vite --config client/vite.config.js",
     "build": "vite build --config client/vite.config.js",
     "start": "node --no-warnings=ExperimentalWarning server/index.js",
-    "seed": "node --no-warnings=ExperimentalWarning server/seed.js --reset",
     "test": "node --no-warnings=ExperimentalWarning tests/run.mjs",
-    "snapshot": "node --no-warnings=ExperimentalWarning scripts/snapshot.js",
     "backup": "node scripts/backup.js",
     "restore-test": "node scripts/backup.js --restore-test",
     "restore": "node scripts/restore.js"

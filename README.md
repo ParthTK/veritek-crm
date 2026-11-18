@@ -47,12 +47,10 @@ npm install
 npm run dev          # API on :4000 and the web app on :5173 → open http://localhost:5173
 ```
 
-On first start the server creates the embedded database in `data/pgdata` and fills it with dated demo data (customers,
-enquiries, quotations, orders, dispatches, invoices, complaints, objects). Rebuild it at any time with:
-
-```bash
-npm run seed
-```
+On first start the server creates the embedded database in `data/pgdata` as a clean installation: the product
+models (prices blank), sales regions, settings and one administrator (`CRM_ADMIN_EMAIL` /
+`CRM_ADMIN_PASSWORD`, or a temporary password printed in the log), and nothing else. There is no demo data;
+see [docs/setup.md](docs/setup.md).
 
 Production-style (one process serving the built app):
 
@@ -65,39 +63,10 @@ npm run build && npm start   # http://localhost:4000
 | `npm run dev` | API with `--watch` plus the Vite dev server |
 | `npm run build` | Builds the React app into `client/dist` |
 | `npm start` | Serves the API and the built app on one port |
-| `npm run seed` | Drops and rebuilds the demo database (refuses if it holds real accounts) |
-| `npm test` | Seeds a throwaway database and runs the acceptance journey (82 checks), the Objects & QR suite, the customer-to-dispatch flow (57 checks) and a sweep of every endpoint, then checks a clean installation |
-| `npm run snapshot` | Rebuilds `seed/veritek-demo.tar.gz` + `seed/files`, the demo data shipped with a serverless deployment |
+| `npm test` | Builds a throwaway database with the tests' sample data and runs the acceptance journey (82 checks), the Objects & QR suite, the customer-to-dispatch flow (57 checks), the people checks and a sweep of every endpoint, then checks a clean installation; the throwaway database is deleted afterwards |
 | `npm run backup` | Backs up every table and the documents with a checksummed manifest |
 | `npm run restore-test` | Reads the latest backup back and reconciles records, files and quantities |
 | `npm run restore -- <backup>` | Restores a backup into an empty database |
-
-For a real installation start without demo data: `CRM_NO_DEMO=1 CRM_ADMIN_EMAIL=… npm start` gives the
-product models (prices blank), sales regions, settings and one administrator, and nothing else —
-see [docs/setup.md](docs/setup.md).
-
-## Demo accounts
-
-Password for every demo account: `Veritek@123`.
-
-| Email | Role | Sees |
-|---|---|---|
-| `admin@veritek.example` | Super admin | Everything, including settings, users and the audit log |
-| `md@veritek.example` | Management | All records and reports; approves quotations |
-| `viewer@veritek.example` | Read-only management | Dashboards, profiles and reports; cannot change anything |
-| `coordinator@veritek.example` | Data coordinator | Work queue; records updates on behalf of others; imports |
-| `saleshead@veritek.example` | Sales head | All regions; approvals above the manager threshold; targets |
-| `rsm.west@veritek.example` | Regional sales manager | West region customers; approves West quotations |
-| `saurav@veritek.example` | Sales executive (West) | Their own customers and work |
-| `kavya@veritek.example` | Export executive | Their own export customers |
-| `commercial@veritek.example` | Quotation / commercial | Quotations, PO checks and order entry for all customers |
-| `production@veritek.example` | Production (Unit 1) | Their factory's order lines — quantities and dates, no prices |
-| `quality@veritek.example` | Quality / QC | Passes lines from QC to ready |
-| `dispatch@veritek.example` | Dispatch | Ready lines, dispatch planning and posting, deliveries |
-| `accounts@veritek.example` | Accounts | Invoices, receipts, TDS, advances, holds |
-| `service@veritek.example` | Service | Complaints, site visits, feedback |
-
-Demo QR objects with a password use `veritek2026`.
 
 ## Project layout
 
@@ -108,11 +77,11 @@ server/            Express 5 API
   routes/          HTTP endpoints, each guarded by a permission
   services/        Business rules (quotes, orders, finance, complaints, objects …)
   access.js        Record scope and value redaction for every response
+  setup.js         The clean installation created on first start (regions, product models, first administrator)
 shared/            Constants, permissions, dates and rules used by both server and client
-scripts/           dev runner, demo snapshot, backup / restore test
-tests/             Acceptance journey, customer-to-dispatch flow, Objects & QR suite, endpoint sweep, clean installation
+scripts/           dev runner, backup / restore test, restore
+tests/             Test suites and their sample data (sample-data.mjs) — never deployed or loaded by the app
 docs/              Delivery pack (setup, configuration, permissions, imports, backup, guides)
-api/index.js       Serverless entry (Vercel) — demo use; data resets on cold start
 ```
 
 ## Delivery pack

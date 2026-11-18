@@ -1,24 +1,6 @@
-import { useEffect, useState } from 'react';
-import { api } from '../api.js';
+import { useState } from 'react';
 import { useAuth } from '../auth.jsx';
 import { Button, Field, Input, Notice, Checkbox, Logo } from '../components/ui.jsx';
-
-const DEMO = [
-  ['admin@veritek.example', 'Super admin'],
-  ['md@veritek.example', 'Management'],
-  ['viewer@veritek.example', 'Read-only management'],
-  ['coordinator@veritek.example', 'Data coordinator'],
-  ['saleshead@veritek.example', 'Sales head'],
-  ['rsm.west@veritek.example', 'Regional manager (West)'],
-  ['saurav@veritek.example', 'Sales executive (domestic)'],
-  ['kavya@veritek.example', 'Export executive'],
-  ['commercial@veritek.example', 'Quotation / commercial'],
-  ['production@veritek.example', 'Production'],
-  ['quality@veritek.example', 'Quality / QC'],
-  ['dispatch@veritek.example', 'Dispatch'],
-  ['accounts@veritek.example', 'Accounts'],
-  ['service@veritek.example', 'Service'],
-];
 
 export default function Login() {
   const { login } = useAuth();
@@ -29,10 +11,6 @@ export default function Login() {
   const [remember, setRemember] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const [demo, setDemo] = useState(false);
-  useEffect(() => {
-    api.get('/auth/info').then((r) => setDemo(r.demo)).catch(() => {});
-  }, []);
   const submit = async (e) => {
     e?.preventDefault();
     setBusy(true);
@@ -75,19 +53,6 @@ export default function Login() {
           <Checkbox label="Keep me signed in on this computer" checked={remember} onChange={setRemember} />
           <Button type="submit" variant="primary" size="lg" loading={busy} className="block">Sign in</Button>
         </form>
-        {demo && (
-          <div className="stack-xs">
-            <div className="small strong">Demo accounts (password Veritek@123)</div>
-            <div className="demo-users">
-              {DEMO.map(([e, label]) => (
-                <button key={e} type="button" onClick={() => { setEmail(e); setPassword('Veritek@123'); }}>
-                  <div className="strong">{label}</div>
-                  <div className="muted tiny">{e}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

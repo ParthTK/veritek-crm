@@ -1,6 +1,5 @@
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import { get, run, EPHEMERAL, SNAPSHOT } from './db.js';
+import { get, run } from './db.js';
 import { HttpError, forbidden, nowIso, now, settings, sha256, token } from './util.js';
 import { can, permissionsFor, groupOf, scopeOf } from '../shared/constants.js';
 
@@ -9,19 +8,8 @@ const ABSOLUTE_DAYS = 7;
 const LOCK_AFTER = 5;
 const LOCK_MINUTES = 15;
 
-/**
- * Sessions are rows keyed by a hash of the token, so they can be revoked (password change, deactivation)
- * and a leaked database does not leak live tokens. On serverless hosting each instance has its own copy
- * of the database, so there the token is signed instead (CRM_TOKEN_SECRET) and carries its own expiry.
- */
-function signingSecret() {
-  if (process.env.CRM_TOKEN_SECRET) return process.env.CRM_TOKEN_SECRET;
-  if (fs.existsSync(SNAPSHOT)) return sha256(fs.readFileSync(SNAPSHOT).subarray(0, 1 << 20));
-  return null;
-}
-const SECRET = EPHEMERAL ? signingSecret() : null;
-const STATELESS = Boolean(SECRET);
-const sign = (payload) => crypto.createHmac('sha256', SECRET).update(payload).digest('base64url');
+// Sessions are rows keyed by a hash of the token, so they can be revoked (password change, deactivation)
+// and a leaked database does not leak live tokens.
 
 // ------------------------------------------------------------------ passwords
 export function hashPassword(password) {
@@ -87,17 +75,13 @@ export function createSession(userId) {
   const created = now();
   const expires = new Date(created.getTime() + ABSOLUTE_DAYS * 86400000).toISOString();
   run('UPDATE users SET last_login_at = ?, failed_logins = 0, locked_until = NULL WHERE id = ?', nowIso(), userId);
-  if (STATELESS) {
-    const payload = Buffer.from(JSON.stringify({ u: userId, e: new Date(created.getTime() + IDLE_HOURS * 3600000).toISOString() })).toString('base64url');
-    return { token: `s1.${payload}.${sign(payload)}`, expires_at: expires };
-  }
   const t = token(32);
   run('INSERT INTO sessions (token_hash, user_id, created_at, expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?)', sha256(t), userId, created.toISOString(), expires, created.toISOString());
   return { token: t, expires_at: expires };
 }
 
 export function destroySession(t) {
-  if (t && !t.startsWith('s1.')) run('DELETE FROM sessions WHERE token_hash = ?', sha256(t));
+  if (t) run('DELETE FROM sessions WHERE token_hash = ?', sha256(t));
 }
 
 export function destroyUserSessions(userId) {
@@ -105,22 +89,6 @@ export function destroyUserSessions(userId) {
 }
 
 function userForToken(t) {
-  if (t.startsWith('s1.')) {
-    if (!STATELESS) return null;
-    const [, payload, signature] = t.split('.');
-    if (!payload || !signature) return null;
-    const expected = Buffer.from(sign(payload));
-    const given = Buffer.from(signature);
-    if (expected.length !== given.length || !crypto.timingSafeEqual(expected, given)) return null;
-    let claims;
-    try {
-      claims = JSON.parse(Buffer.from(payload, 'base64url').toString());
-    } catch {
-      return null;
-    }
-    if (!claims?.u || !claims.e || claims.e < new Date().toISOString()) return null;
-    return get('SELECT * FROM users WHERE id = ? AND active = 1 AND login_enabled = 1', claims.u);
-  }
   const hash = sha256(t);
   const row = get(
     `SELECT u.*, s.last_seen_at AS session_seen, s.expires_at AS session_expires FROM sessions s JOIN users u ON u.id = s.user_id

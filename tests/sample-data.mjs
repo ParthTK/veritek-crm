@@ -1,39 +1,41 @@
-// Demo data. Replays ~18 months of business through the real services with a pinned clock, so every
-// enquiry, quotation revision, production update, date revision, dispatch and follow-up is internally
-// consistent — produced by the same code paths a user would take. The final weeks are staged to show
-// the situations in the specification's reference screens (all records are fictional).
-import crypto from 'node:crypto';
+// Sample data for the automatic tests only — never part of the app or of a real installation. `npm test`
+// builds it in a throwaway folder and deletes it afterwards. It replays ~18 months of business through the real
+// services with a pinned clock, so every enquiry, quotation revision, production update, date revision,
+// dispatch and follow-up is internally consistent — produced by the same code paths a user would take. The
+// final weeks are staged to show the situations in the specification's reference screens (all fictional).
 import { fileURLToPath } from 'node:url';
-import { all, get, run, insert, update, tx, migrate, dropAllTables, closeDb, DB_PATH } from './db.js';
+import { all, get, run, insert, update, tx, migrate, closeDb, DB_PATH } from '../server/db.js';
 import {
   setClock, now, withContext, setSetting, resetSettingsCache, resetDropdownCache, settings, nextCode, setCounter, today, installSecret,
-} from './util.js';
-import { hashPassword, publicUser } from './auth.js';
-import { ensureDropdownDefaults, deactivateUser } from './services/admin.js';
-import { createCustomer, mergeCustomers, setDoNotContact, addContact } from './services/customers.js';
-import { createEnquiry, changeStage, setLineOutcome } from './services/enquiries.js';
-import { completeTask, rescheduleTask, recordActivity, createTask } from './services/tasks.js';
+} from '../server/util.js';
+import { hashPassword, publicUser } from '../server/auth.js';
+import { ensureDropdownDefaults, deactivateUser } from '../server/services/admin.js';
+import { createCustomer, mergeCustomers, setDoNotContact, addContact } from '../server/services/customers.js';
+import { createEnquiry, changeStage, setLineOutcome } from '../server/services/enquiries.js';
+import { completeTask, rescheduleTask, recordActivity, createTask } from '../server/services/tasks.js';
 import {
   createQuotation, issueRevision, recordOutcome, newRevision, updateDraft, convertToOrder, submitForApproval, decideApproval,
-} from './services/quotes.js';
+} from '../server/services/quotes.js';
 import {
   createOrder, quickUpdate, recordCommunication, postDispatch, recordDispatchNotice, cancelQuantity, reverseDispatch, setCommitment,
-} from './services/orders.js';
-import { recordUpdate, openLinkedEnquiry, closeCase } from './services/reactivation.js';
-import { createInvoice, recordReceipt, setPromise, placeHold, setFinanceAsOf, recordAdvance } from './services/finance.js';
-import { saveCampaign } from './services/campaigns.js';
-import { saveTargets } from './services/team.js';
-import { addDocument } from './services/products.js';
-import { seedObjects, seedObjectCategories } from './seed-objects.js';
-import { createComplaint, updateComplaint } from './services/complaints.js';
-import { storeAttachment } from './services/attachments.js';
-import { storeUpload, commitImport } from './services/imports.js';
-import { runEvaluator } from './services/alerts.js';
+} from '../server/services/orders.js';
+import { recordUpdate, openLinkedEnquiry, closeCase } from '../server/services/reactivation.js';
+import { createInvoice, recordReceipt, setPromise, placeHold, setFinanceAsOf, recordAdvance } from '../server/services/finance.js';
+import { saveCampaign } from '../server/services/campaigns.js';
+import { saveTargets } from '../server/services/team.js';
+import { addDocument } from '../server/services/products.js';
+import { createComplaint, updateComplaint } from '../server/services/complaints.js';
+import { storeAttachment } from '../server/services/attachments.js';
+import { storeUpload, commitImport } from '../server/services/imports.js';
+import { runEvaluator } from '../server/services/alerts.js';
+import { REGIONS, FAMILIES, CATALOGUE } from '../server/setup.js';
 import {
   addDays, addWorkingDays, onOrNextWorkingDay, isWorkingDay, localDate, zonedToUtc, zonedParts,
 } from '../shared/dates.js';
+import { seedObjects } from './sample-objects.mjs';
 
-export const DEMO_PASSWORD = 'Veritek@123';
+// Every sample account signs in with this password (the tests use it).
+export const SAMPLE_PASSWORD = 'Veritek@123';
 const TZ = 'Asia/Kolkata';
 
 // ------------------------------------------------------------------ deterministic randomness
@@ -109,7 +111,7 @@ class Heap {
 }
 
 // ------------------------------------------------------------------ master data
-// One demo sign-in per role (password DEMO_PASSWORD); Suresh is a named owner who does not sign in.
+// One sample sign-in per role (password SAMPLE_PASSWORD); Suresh is a named owner who does not sign in.
 const PEOPLE = [
   { key: 'admin', name: 'Anita Rao', email: 'admin@veritek.example', role: 'super_admin', department: 'management', designation: 'Director' },
   { key: 'md', name: 'Vikram Shah', email: 'md@veritek.example', role: 'management', department: 'management', designation: 'Managing Director' },
@@ -129,39 +131,26 @@ const PEOPLE = [
   { key: 'joseph', name: 'Joseph D\'Souza', email: 'service@veritek.example', role: 'service', department: 'service', designation: 'Service Engineer' },
 ];
 
-const REGIONS = [
-  ['West', 'Maharashtra, Gujarat, Goa, Madhya Pradesh'],
-  ['North', 'Delhi, Punjab, Haryana, Rajasthan, Uttar Pradesh'],
-  ['South', 'Tamil Nadu, Karnataka, Kerala, Telangana, Andhra Pradesh'],
-  ['East', 'West Bengal, Odisha, Bihar, Assam'],
-  ['Export', 'Customers outside India'],
-];
 const FACTORIES = [['Unit 1 — Vasai', 'Vasai (E), Palghar'], ['Unit 2 — Nashik', 'Ambad MIDC, Nashik']];
 
-// [code, name, family, standard price (INR), details]. The first 13 are the ones the simulation trades in.
-// Prices are demo values; dealer / distributor / minimum / cost prices are derived from the standard price.
-const PRODUCTS = [
-  ['VIPS 70L', 'Digital panel meter 72×72, LED', 'Panel meters', 1450, { model: '72×72 mm · 3½-digit LED', hsn: '90303390', lead: 10, warranty: 24, stock: 'stock', options: [['Display colour', 'Red LED', 0, 0, 0], ['Display colour', 'Green LED', 60, 30, 0], ['Auxiliary supply', '90–270 V AC', 0, 0, 0], ['Auxiliary supply', '24 V DC', 120, 70, 3]] }],
-  ['VIPS 83P', 'Programmable panel meter 96×96', 'Panel meters', 2350, { model: '96×96 mm · programmable input', hsn: '90303390', lead: 12, warranty: 24, stock: 'stock', options: [['Output', 'None', 0, 0, 0], ['Output', '2 relay outputs', 420, 240, 2], ['Output', '4–20 mA retransmission', 560, 310, 3]] }],
-  ['VIPS 44D', 'Dual-display ammeter / voltmeter', 'Panel meters', 1900, { model: '96×48 mm · dual 4-digit display', hsn: '90303390', lead: 10, warranty: 24, stock: 'stock' }],
-  ['VIPS 98EFR', 'Multifunction power meter, RS-485', 'Multifunction meters', 7800, { model: 'Class 0.5S · 63 parameters · Modbus RTU', hsn: '90303390', lead: 18, warranty: 36, stock: 'made_to_order', options: [['Communication', 'RS-485 Modbus RTU', 0, 0, 0], ['Communication', 'Modbus TCP (Ethernet)', 1650, 980, 5], ['Accuracy class', 'Class 1.0', -400, -260, 0], ['Accuracy class', 'Class 0.5S', 0, 0, 0], ['Accuracy class', 'Class 0.2S', 1450, 870, 7]] }],
-  ['VIPS 96MF', 'Multifunction meter, Modbus TCP', 'Multifunction meters', 6400, { model: '96×96 mm · Modbus TCP', hsn: '90303390', lead: 15, warranty: 36, stock: 'made_to_order', options: [['Auxiliary supply', '90–270 V AC', 0, 0, 0], ['Auxiliary supply', '24–60 V DC', 350, 210, 3]] }],
-  ['VIPS EM3', 'Three-phase energy meter, class 1', 'Energy meters', 4200, { model: 'Class 1 · CT-operated · pulse output', hsn: '90283010', lead: 12, warranty: 24, stock: 'stock' }],
-  ['VIPS EM1', 'Single-phase DIN-rail energy meter', 'Energy meters', 1350, { model: '1-module DIN rail · 5(32) A', hsn: '90283010', lead: 7, warranty: 24, stock: 'stock' }],
-  ['CT 100/5A', 'Resin-cast current transformer 100/5 A', 'Current transformers', 520, { model: 'Class 1 · 5 VA · moulded', hsn: '85043100', lead: 8, warranty: 12, stock: 'stock' }],
-  ['CT 200/5A', 'Resin-cast current transformer 200/5 A', 'Current transformers', 610, { model: 'Class 1 · 5 VA · moulded', hsn: '85043100', lead: 8, warranty: 12, stock: 'stock' }],
-  ['CT 400/5A', 'Resin-cast current transformer 400/5 A', 'Current transformers', 780, { model: 'Class 0.5 · 10 VA · moulded', hsn: '85043100', lead: 10, warranty: 12, stock: 'stock', options: [['Accuracy class', 'Class 1', 0, 0, 0], ['Accuracy class', 'Class 0.5', 140, 80, 2]] }],
-  ['CT 800/5A', 'Ring-type current transformer 800/5 A', 'Current transformers', 1150, { model: 'Ring type · 15 VA', hsn: '85043100', lead: 12, warranty: 12, stock: 'made_to_order' }],
-  ['VIPS PT-110', 'Panel-mount potential transformer', 'Current transformers', 2900, { model: '415/110 V · 50 VA', hsn: '85043100', lead: 15, warranty: 12, stock: 'made_to_order' }],
-  ['VIPS MOD-485', 'RS-485 communication module', 'Accessories', 1250, { model: 'Plug-in · isolated RS-485', hsn: '85176290', lead: 7, warranty: 18, stock: 'stock' }],
-  ['VIPS DSP-7', 'Replacement display module', 'Accessories', 640, { model: 'Spare display for 72/96 mm meters', hsn: '90309000', lead: 5, warranty: 6, stock: 'stock' }],
-  ['VIPS 83M', 'Earth leakage relay with CBCT input', 'Protection relays', 3200, { model: '30 mA – 30 A adjustable · 2 C/O contacts', hsn: '85364900', lead: 14, warranty: 24, stock: 'made_to_order' }],
-  ['VIPS 99MF', 'Multifunction timer, 8 functions', 'Timers', 980, { model: '48×48 mm · 0.1 s – 999 h', hsn: '91070000', lead: 7, warranty: 18, stock: 'stock' }],
-  ['VIPS 99SD', 'Star-delta timer', 'Timers', 760, { model: 'DIN rail · 0–60 s star time', hsn: '91070000', lead: 7, warranty: 18, stock: 'stock' }],
-  ['VIPS 2424', 'SMPS 24 V DC, 1 A, DIN rail', 'SMPS', 890, { model: '24 W · DIN rail', hsn: '85044090', lead: 6, warranty: 24, stock: 'stock' }],
-  ['VIPS 24120', 'SMPS 24 V DC, 5 A, DIN rail', 'SMPS', 2150, { model: '120 W · DIN rail', hsn: '85044090', lead: 8, warranty: 24, stock: 'stock' }],
-];
-const FAMILIES = ['Panel meters', 'Multifunction meters', 'Energy meters', 'Current transformers', 'Protection relays', 'Timers', 'SMPS', 'Accessories'];
+// Sample prices (INR), for the test data only: [standard price, { option: [price change, cost change] }]. Dealer /
+// distributor / minimum / cost prices are derived from the standard price.
+const SAMPLE_PRICES = {
+  'VIPS 70L': [1450, { 'Green LED': [60, 30], '24 V DC': [120, 70] }],
+  'VIPS 83P': [2350, { '2 relay outputs': [420, 240], '4–20 mA retransmission': [560, 310] }],
+  'VIPS 44D': [1900],
+  'VIPS 98EFR': [7800, { 'Modbus TCP (Ethernet)': [1650, 980], 'Class 1.0': [-400, -260], 'Class 0.2S': [1450, 870] }],
+  'VIPS 96MF': [6400, { '24–60 V DC': [350, 210] }],
+  'VIPS EM3': [4200], 'VIPS EM1': [1350], 'CT 100/5A': [520], 'CT 200/5A': [610], 'CT 400/5A': [780, { 'Class 0.5': [140, 80] }],
+  'CT 800/5A': [1150], 'VIPS PT-110': [2900], 'VIPS MOD-485': [1250], 'VIPS DSP-7': [640], 'VIPS 83M': [3200],
+  'VIPS 99MF': [980], 'VIPS 99SD': [760], 'VIPS 2424': [890], 'VIPS 24120': [2150],
+};
+// The real product catalogue with those prices: [code, name, family, standard price, details], options as
+// [group, choice, price change, cost change, extra lead days]. The first 13 are the ones the simulation trades in.
+const PRODUCTS = CATALOGUE.map(([code, name, family, d]) => {
+  const [price, options = {}] = SAMPLE_PRICES[code] || [1000];
+  return [code, name, family, price, { ...d, options: d.options?.map(([group, choice, lead]) => [group, choice, ...(options[choice] || [0, 0]), lead]) }];
+});
 
 // Indian cities to states (regions come from the state list on each region).
 const CITY_STATE = {
@@ -227,8 +216,8 @@ const DIAL = { IN: '+91 98', AE: '+971 50', SA: '+966 55', OM: '+968 92', QA: '+
 const CURRENCY = { IN: 'INR', AE: 'AED', SA: 'USD', OM: 'USD', QA: 'USD', KE: 'USD', NG: 'USD', BD: 'USD', LK: 'USD', NP: 'INR', EG: 'USD', TZ: 'USD' };
 const FX = { INR: 1, USD: 1 / 83, AED: 1 / 22.6 };
 
-/** A tiny but valid PDF used for demo quotation and PO documents. */
-function demoPdf(text) {
+/** A tiny but valid PDF used for sample quotation and PO documents. */
+function samplePdf(text) {
   const body = `BT /F1 14 Tf 60 760 Td (${text.replace(/[()\\]/g, '')}) Tj ET`;
   const objs = [
     '1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj',
@@ -249,59 +238,7 @@ function demoPdf(text) {
   return Buffer.from(out, 'latin1');
 }
 
-// ------------------------------------------------------------------ helpers
-function dropAll() {
-  dropAllTables();
-}
-
-/** Creates the first super administrator, who must change the password at first sign-in. Returns the id. */
-export function bootstrapAdmin() {
-  const email = process.env.CRM_ADMIN_EMAIL || 'admin@localhost';
-  const password = process.env.CRM_ADMIN_PASSWORD || `Vt-${crypto.randomBytes(6).toString('base64url')}9`;
-  const stamp = new Date().toISOString();
-  const id = insert('users', { name: 'Administrator', email, role: 'super_admin', department: 'management', login_enabled: 1, password_hash: hashPassword(password), must_change_password: 1, active: 1, created_at: stamp, updated_at: stamp });
-  console.log(`Created the first administrator: ${email}${process.env.CRM_ADMIN_PASSWORD ? '' : ` / temporary password ${password}`} (must be changed at first sign-in)`);
-  return id;
-}
-
-/**
- * A clean installation for real use: no demo companies, people, enquiries, quotations, orders, campaigns,
- * objects or documents. It keeps the reference set-up — sales regions, product categories and the product
- * model list with specifications, the object-register category templates, default settings and dropdowns —
- * and creates one administrator. Prices, dealer/distributor prices, minimum price, cost, configurator price
- * changes and stock quantities are left blank for the company to fill in. Factories are added under Settings.
- */
-export function seedBaseline({ reset = false } = {}) {
-  if (reset) dropAll();
-  migrate();
-  resetSettingsCache();
-  ensureDropdownDefaults();
-  const stamp = new Date().toISOString();
-  tx(() => {
-    REGIONS.forEach(([name, states], i) => insert('regions', { name, states, active: 1, sort_order: i }));
-    const adminId = bootstrapAdmin();
-    setSetting('escalation', { defaultManagerId: adminId });
-    const cat = {};
-    FAMILIES.forEach((name, i) => { cat[name] = insert('product_categories', { name, description: null, active: 1, sort_order: i, created_at: stamp }); });
-    for (const [code, name, family, , d] of PRODUCTS) {
-      const pid = insert('products', {
-        code, name, family, category_id: cat[family], model: d.model, hsn: d.hsn, default_unit: 'pcs', integer_qty: 1, price_currency: 'INR',
-        gst_rate: 18, warranty_months: d.warranty, lead_time_days: d.lead, stock_type: d.stock, description: `${name}. ${d.model}.`,
-        specs: JSON.stringify({ Model: d.model, 'HSN code': d.hsn, Warranty: `${d.warranty} months` }), active: 1, created_at: stamp, updated_at: stamp,
-      });
-      (d.options || []).forEach(([group, opt, , , leadDelta], i) => insert('product_options', {
-        product_id: pid, group_name: group, name: opt, price_delta_minor: 0, cost_delta_minor: 0, lead_time_delta: leadDelta, active: 1, sort_order: i,
-      }));
-    }
-    seedObjectCategories(adminId);
-  });
-  resetSettingsCache();
-  installSecret();
-  console.log(`Clean installation ready: ${PRODUCTS.length} products (prices blank), ${REGIONS.length} regions, no demo records.`);
-}
-
-export function seed({ reset = false } = {}) {
-  if (reset) dropAll();
+export function buildSampleData() {
   migrate();
   resetSettingsCache();
   ensureDropdownDefaults();
@@ -347,7 +284,7 @@ export function seed({ reset = false } = {}) {
     const stamp = new Date(clockMs).toISOString();
     REGIONS.forEach(([name, states], i) => { REG[name] = insert('regions', { name, states, active: 1, sort_order: i }); });
     for (const [name, location] of FACTORIES) FAC[name] = insert('factories', { name, location, active: 1 });
-    const hash = hashPassword(DEMO_PASSWORD);
+    const hash = hashPassword(SAMPLE_PASSWORD);
     for (const p of PEOPLE) {
       const login = p.role !== 'staff';
       const id = insert('users', {
@@ -636,7 +573,7 @@ export function seed({ reset = false } = {}) {
       let docId = null;
       if (chance(0.5)) {
         const number = get('SELECT number FROM quotations WHERE id = ?', qres.quotation_id).number;
-        docId = safe('quote doc', () => storeAttachment({ buffer: demoPdf(`Veritek quotation ${number} rev 1 — ${info.name}`), name: `${number}-rev1.pdf`, entityType: 'enquiry', entityId: deal.enquiryId }, u))?.id;
+        docId = safe('quote doc', () => storeAttachment({ buffer: samplePdf(`Veritek quotation ${number} rev 1 — ${info.name}`), name: `${number}-rev1.pdf`, entityType: 'enquiry', entityId: deal.enquiryId }, u))?.id;
       }
       safe('issue', () => issueRevision(qres.revision_id, {
         sent_at: new Date(clockMs).toISOString(), channel: pick(['email', 'email', 'whatsapp']), contact_id: contactOf(deal.cid), document_id: docId,
@@ -716,7 +653,7 @@ export function seed({ reset = false } = {}) {
       ...(chance(0.06) ? { commitment_state: 'uncommitted' } : { original_commitment_date: onOrNextWorkingDay(i && chance(0.3) ? addDays(base, int(7, 14)) : base, cal) }),
     }));
     let poDoc = null;
-    if (chance(0.4)) poDoc = safe('po doc', () => storeAttachment({ buffer: demoPdf(`Purchase order from ${info.name}`), name: `PO-${info.name.split(' ')[0]}-${int(100, 999)}.pdf`, entityType: 'enquiry', entityId: deal.enquiryId }, u))?.id;
+    if (chance(0.4)) poDoc = safe('po doc', () => storeAttachment({ buffer: samplePdf(`Purchase order from ${info.name}`), name: `PO-${info.name.split(' ')[0]}-${int(100, 999)}.pdf`, entityType: 'enquiry', entityId: deal.enquiryId }, u))?.id;
     const res = safe('convert', () => convertToOrder(deal.revisionId, {
       lines: conv, po_reference: `${info.name.split(' ')[0].toUpperCase().slice(0, 4)}/PO/${curDate().slice(2, 4)}${String(++poSeq).padStart(3, "0")}`, received_date: curDate(), confirmation_type: 'po',
       confirmation_document_id: poDoc, confirm: true,
@@ -1026,7 +963,7 @@ export function seed({ reset = false } = {}) {
     }
   });
 
-  // ---------------------------------------------------------------- merged-module demo data
+  // ---------------------------------------------------------------- merged-module sample data
   tx(() => {
     // Campaign enquiries: exhibition enquiries in the weeks after each show, and dealer referrals after the meet.
     for (const cp of Object.values(CMP)) {
@@ -1104,7 +1041,7 @@ export function seed({ reset = false } = {}) {
   tx(() => as('admin', (u) => {
     for (const code of ['VIPS 98EFR', 'VIPS 96MF', 'VIPS 70L', 'CT 400/5A', 'VIPS 83M']) {
       const d = PRODUCTS.find((x) => x[0] === code);
-      const a = safe('datasheet', () => storeAttachment({ buffer: demoPdf(`${code} datasheet — ${d[1]} — ${d[4].model}`), name: `${code.replace(/[^A-Za-z0-9]+/g, '-')}-datasheet.pdf`, entityType: 'product', entityId: P[code].id }, u));
+      const a = safe('datasheet', () => storeAttachment({ buffer: samplePdf(`${code} datasheet — ${d[1]} — ${d[4].model}`), name: `${code.replace(/[^A-Za-z0-9]+/g, '-')}-datasheet.pdf`, entityType: 'product', entityId: P[code].id }, u));
       if (a) safe('product doc', () => addDocument(P[code].id, { title: `${code} datasheet`, doc_type: 'datasheet', attachment_id: a.id }, u));
       safe('product link', () => addDocument(P[code].id, { title: 'Product range on veritekindia.com', doc_type: 'brochure', url: 'https://www.veritekindia.com/products.html' }, u));
     }
@@ -1133,7 +1070,7 @@ export function seed({ reset = false } = {}) {
 
   const counts = Object.fromEntries(['products', 'customers', 'contacts', 'campaigns', 'enquiries', 'quotations', 'quote_revisions', 'approvals', 'orders', 'order_lines', 'order_updates', 'dispatches', 'cancellations', 'tasks', 'activities', 'reactivation_cases', 'alerts', 'invoices', 'receipts', 'complaints', 'objects', 'attachments']
     .map((t) => [t, get(`SELECT COUNT(*) AS n FROM ${t}`).n]));
-  console.log(`Demo data ready in ${((Date.now() - started) / 1000).toFixed(1)} s — ${events} simulated events.`, counts);
+  console.log(`Sample data ready in ${((Date.now() - started) / 1000).toFixed(1)} s — ${events} simulated events.`, counts);
   console.log(`Evaluator: ${evaluation.status}`);
   if (failures.length) {
     console.log(`${failures.length} simulated step(s) were rejected by business rules (expected occasionally):`);
@@ -1142,30 +1079,19 @@ export function seed({ reset = false } = {}) {
   return { counts, failures };
 }
 
-// `node server/seed.js --reset` rebuilds the demo; `--clean` builds a clean installation instead.
-// A database holding accounts other than the demo ones is never erased unless --yes is given too.
+// `node tests/sample-data.mjs` fills the EMPTY database in CRM_DATA_DIR (the tests' throwaway folder). It refuses a
+// database that already has accounts, so sample records can never be mixed into real data.
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const args = process.argv.slice(2);
-  const reset = args.includes('--reset');
-  const count = (sql) => {
-    try {
-      return get(sql).n;
-    } catch {
-      return 0; // no tables yet
-    }
-  };
-  const realAccounts = count("SELECT COUNT(*) AS n FROM users WHERE email NOT LIKE '%@veritek.example'");
-  if (reset && realAccounts && !args.includes('--yes')) {
-    console.error(`Nothing was changed: ${DB_PATH} holds ${realAccounts} account(s) that are not demo accounts.\nRun again with --yes only if you really mean to erase everything in it.`);
+  let accounts = 0;
+  try {
+    accounts = get('SELECT COUNT(*) AS n FROM users').n;
+  } catch {
+    /* no tables yet */
+  }
+  if (accounts) {
+    console.error(`Nothing was changed: ${DB_PATH} already has accounts. Sample data only goes into an empty, throwaway database.`);
     process.exit(1);
   }
-  if (!reset && count('SELECT COUNT(*) AS n FROM users')) {
-    console.error(`Nothing was changed: ${DB_PATH} already has data. Add --reset to rebuild it.`);
-    process.exit(1);
-  }
-  if (args.includes('--clean')) seedBaseline({ reset });
-  else seed({ reset });
+  buildSampleData();
   closeDb();
 }
-
-export { today, nextCode, addContact, createTask, closeCase, openLinkedEnquiry, recordOutcome, isWorkingDay, now };

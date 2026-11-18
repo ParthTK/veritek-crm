@@ -1,11 +1,8 @@
 node_modules
 client/dist
 data
-seed
 tests
 docs
-api
 .git
-.vercel
 *.log
 .env

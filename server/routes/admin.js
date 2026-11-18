@@ -34,7 +34,8 @@ r.post('/admin/users/:id/reactivate', allow('users.manage'), h((req) => reactiva
 r.get('/admin/settings', allow('settings.manage'), h(() => getSettings()));
 r.put('/admin/settings/:section', allow('settings.manage'), h((req) => {
   const out = updateSettings(req.params.section, req.body || {}, req.user);
-  if (req.params.section === 'scheduler' && !process.env.VERCEL) startScheduler(maybeScheduledBackup);
+  // Restart the in-process scheduler with the new settings, unless Cloud Scheduler drives it (as in index.js).
+  if (req.params.section === 'scheduler' && process.env.CRM_NO_SCHEDULER !== '1') startScheduler(maybeScheduledBackup);
   return out;
 }));
 r.get('/admin/dropdowns', allow('settings.manage'), h(() => listDropdowns()));

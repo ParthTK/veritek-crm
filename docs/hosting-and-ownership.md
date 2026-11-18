@@ -23,7 +23,6 @@ No paid third-party API, message gateway or database licence is required.
 | Google Cloud project `veritek-513405` (Cloud Run, Cloud SQL, Cloud Storage, Cloud Scheduler, Secret Manager) | Runs the CRM, its database and documents | Veritek Google account | Pay per use: roughly ₹200–400 a month for the CRM (see [deploy-google-cloud.md](deploy-google-cloud.md)). Cloud SQL is already paid for by the website |
 | Domain registrar & DNS | `veritekindia.com` sub-domain | Veritek | *(existing)* |
 | Source repository (e.g. GitHub organisation) | Code, history, handover | Veritek organisation, developers as members | *(free tier possible)* |
-| Optional demo hosting (Vercel) | Public demo only | Veritek team account | *(free tier possible)* |
 
 Keep at least two Veritek administrators on every account and in the CRM itself (super administrator role).
 
@@ -36,7 +35,7 @@ All open source; versions pinned in `package-lock.json`.
 | Node.js | Server runtime | MIT |
 | PostgreSQL (Cloud SQL) | Database | PostgreSQL licence |
 | pg | PostgreSQL client | MIT |
-| @electric-sql/pglite | Embedded PostgreSQL for local use, tests and the demo | Apache-2.0 / PostgreSQL |
+| @electric-sql/pglite | Embedded PostgreSQL for local use and the tests | Apache-2.0 / PostgreSQL |
 | express | HTTP API | MIT |
 | qrcode | QR code images | MIT |
 | react, react-dom, react-router-dom | Web interface | MIT |

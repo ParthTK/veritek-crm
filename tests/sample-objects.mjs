@@ -1,20 +1,22 @@
-// Demo content for the Objects & QR module: equipment, products and documents with real attached files,
-// permanent codes and a believable scan history. Files go through the normal private document storage.
-import { get, insert, run } from './db.js';
-import { nowIso, today, audit } from './util.js';
+// Sample content for the Objects & QR module, for the automatic tests only (never part of the app): equipment,
+// products and documents with real attached files, permanent codes and a believable scan history. Files go
+// through the normal private document storage of the tests' throwaway installation.
+import { get, insert, run } from '../server/db.js';
+import { nowIso, today, audit } from '../server/util.js';
 import { addDays } from '../shared/dates.js';
-import { hashPassword } from './auth.js';
-import { newPublicId, publicUrlFor } from './services/objects.js';
-import { storeAttachment } from './services/attachments.js';
-import { zipFiles } from './lib/codes.js';
+import { hashPassword } from '../server/auth.js';
+import { newPublicId, publicUrlFor } from '../server/services/objects.js';
+import { storeAttachment } from '../server/services/attachments.js';
+import { zipFiles } from '../server/lib/codes.js';
+import { OBJECT_CATEGORIES, fieldKey, createObjectCategories } from '../server/object-categories.js';
 
-export const DEMO_OBJECT_PASSWORD = 'veritek2026';
-const BASE_URL = 'https://veritekcrm.vercel.app';
+export const SAMPLE_OBJECT_PASSWORD = 'veritek2026';
+const BASE_URL = 'https://crm.veritek.example';
 
 // ------------------------------------------------------------------ file builders
 const esc = (s) => String(s).replace(/([()\\])/g, '\\$1');
 
-/** A small, genuinely valid PDF so previews and downloads work in the demo. */
+/** A small, genuinely valid PDF so previews and downloads can be tested. */
 export function buildPdf(title, lines) {
   const body = [`BT /F1 18 Tf 60 780 Td (${esc(title)}) Tj ET`, ...lines.map((line, i) => `BT /F1 11 Tf 60 ${742 - i * 18} Td (${esc(line)}) Tj ET`)].join('\n');
   const objects = [
@@ -58,50 +60,13 @@ export function buildXlsx(sheetName, rows) {
   ]);
 }
 
-// ------------------------------------------------------------------ demo content
-// The category templates are generic set-up, so a clean installation starts with them too.
-const CATEGORIES = [
-  {
-    name: 'Machines & equipment', description: 'Anything on the shop floor or at a customer site',
-    fields: [
-      { label: 'Model number', type: 'text' }, { label: 'Serial number', type: 'text' }, { label: 'Commissioned on', type: 'date' }, { label: 'Warranty expiry', type: 'date' },
-      { label: 'Service interval', type: 'dropdown', options: ['Monthly', 'Quarterly', 'Half-yearly', 'Annual'] }, { label: 'Under AMC', type: 'checkbox' },
-    ],
-  },
-  {
-    name: 'Finished products', description: 'Catalogue items shipped to customers',
-    fields: [{ label: 'Model', type: 'text' }, { label: 'Specification', type: 'notes' }, { label: 'Product page', type: 'url' }, { label: 'Warranty (months)', type: 'number' }],
-  },
-  {
-    name: 'Documents & certificates', description: 'Calibration certificates, test reports, approvals',
-    fields: [{ label: 'Issued by', type: 'text' }, { label: 'Issue date', type: 'date' }, { label: 'Valid until', type: 'date' }, { label: 'Reference', type: 'text' }],
-  },
-  {
-    name: 'Facilities & assets', description: 'Rooms, vehicles, tools, furniture',
-    fields: [{ label: 'Asset tag', type: 'text' }, { label: 'Responsible person', type: 'text' }, { label: 'Purchase date', type: 'date' }, { label: 'Condition', type: 'dropdown', options: ['New', 'Good', 'Needs attention'] }],
-  },
-];
-
-const fieldKey = (label) => label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
-
-/** Creates the starter object categories (with their field templates). Returns name → id. */
-export function seedObjectCategories(adminId) {
-  const ids = {};
-  for (const c of CATEGORIES) {
-    ids[c.name] = insert('object_categories', {
-      name: c.name, description: c.description,
-      field_template: JSON.stringify(c.fields.map((f) => ({ key: fieldKey(f.label), ...f, public: true }))), created_by: adminId, created_at: nowIso(),
-    });
-  }
-  return ids;
-}
-
-/** Seeds the object register. `users` are publicUser objects; `products` maps product code to id. */
+// ------------------------------------------------------------------ sample objects
+/** Fills the object register. `users` are publicUser objects; `products` maps product code to id. */
 export function seedObjects({ users, products, rand }) {
   const ri = (a, b) => a + Math.floor(rand() * (b - a + 1));
   const pick = (arr) => arr[Math.floor(rand() * arr.length)];
   const admin = users.admin;
-  const categoryIds = seedObjectCategories(admin.id);
+  const categoryIds = createObjectCategories(admin.id);
   const customerFor = (name) => get('SELECT id, company_name FROM customers WHERE company_name = ? AND merged_into_id IS NULL', name);
   const orderFor = (customerId) => get("SELECT id FROM orders WHERE customer_id = ? AND status = 'confirmed' ORDER BY received_date DESC LIMIT 1", customerId);
 
@@ -197,7 +162,7 @@ export function seedObjects({ users, products, rand }) {
   let created = 0;
   for (const def of defs) {
     const createdAt = `${addDays(today(), -ri(40, 220))}T10:00:00.000Z`;
-    const template = CATEGORIES.find((c) => c.name === def.category).fields;
+    const template = OBJECT_CATEGORIES.find((c) => c.name === def.category).fields;
     const customFields = template.map((f) => ({ key: fieldKey(f.label), label: f.label, type: f.type, options: f.options, value: def.fields[f.label] ?? (f.type === 'checkbox' ? false : ''), public: true }));
     const customer = def.customer ? customerFor(def.customer) : null;
     const id = insert('objects', {
@@ -245,7 +210,7 @@ export function seedObjects({ users, products, rand }) {
   // One password-protected object.
   const privateId = insert('objects', {
     public_id: newPublicId(), name: 'Tender pricing pack — municipal water works', description: 'Commercial pack shared with the consultant. Ask the sales owner for the password.',
-    category_id: categoryIds['Documents & certificates'], owner_name: 'Sales', visibility: 'password', password_hash: hashPassword(DEMO_OBJECT_PASSWORD), custom_fields: '[]', status: 'active',
+    category_id: categoryIds['Documents & certificates'], owner_name: 'Sales', visibility: 'password', password_hash: hashPassword(SAMPLE_OBJECT_PASSWORD), custom_fields: '[]', status: 'active',
     created_by: admin.id, created_at: `${addDays(today(), -30)}T09:00:00.000Z`, updated_at: `${addDays(today(), -12)}T09:00:00.000Z`,
   });
   const pack = store('tender-pricing-pack.pdf', buildPdf('Tender pricing pack', ['Confidential - shared with the consultant only', 'Item rates as per tender schedule B', 'Validity: 90 days from submission']), privateId);

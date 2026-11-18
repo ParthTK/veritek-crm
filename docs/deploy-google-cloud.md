@@ -82,7 +82,7 @@ values on a command line: generate them into Secret Manager through standard inp
    gcloud run deploy veritek-crm --source . --region=asia-south1 \
      --service-account=veritek-crm-run@veritek-513405.iam.gserviceaccount.com \
      --add-cloudsql-instances=veritek-513405:asia-south1:veritek-db \
-     --set-env-vars=PGHOST=/cloudsql/veritek-513405:asia-south1:veritek-db,PGUSER=veritek_crm,PGDATABASE=veritek,CRM_PG_SCHEMA=crm,CRM_FILES_BUCKET=veritek-513405-crm-files,CRM_NO_DEMO=1,CRM_NO_SCHEDULER=1,CRM_ADMIN_EMAIL=admin@veritekindia.com \
+     --set-env-vars=PGHOST=/cloudsql/veritek-513405:asia-south1:veritek-db,PGUSER=veritek_crm,PGDATABASE=veritek,CRM_PG_SCHEMA=crm,CRM_FILES_BUCKET=veritek-513405-crm-files,CRM_NO_SCHEDULER=1,CRM_ADMIN_EMAIL=admin@veritekindia.com \
      --set-secrets=PGPASSWORD=veritek-crm-db-password:latest,CRM_CRON_SECRET=veritek-crm-cron-secret:latest,CRM_ADMIN_PASSWORD=veritek-crm-admin-password:latest \
      --min-instances=0 --max-instances=1 --cpu=1 --memory=512Mi --concurrency=20 --timeout=300 \
      --allow-unauthenticated

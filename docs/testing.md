@@ -6,8 +6,10 @@
 npm test
 ```
 
-seeds a throwaway database in the system temp folder, starts the API on a spare port and runs the suites
-below against it over HTTP — the real database is never touched.
+builds a throwaway database in the system temp folder with the tests' own sample data
+(`tests/sample-data.mjs`: fictional companies, people, enquiries and orders, used only here), starts the API on
+a spare port and runs the suites below against it over HTTP, then deletes the folder. The real database is
+never touched, and the app itself never loads sample data.
 
 ### Acceptance journey (`tests/journey.mjs`, 82 checks)
 
@@ -81,6 +83,6 @@ was refused with 403/404 by design; no shop-floor response contained prices.
 
 ## Backup restore test
 
-`npm run restore-test` on the seeded data restored 8,619 records across 20 tables and 153 documents with
+`npm run restore-test` on the tests' sample data restored 8,619 records across 20 tables and 153 documents with
 matching checksums, with order quantities reconciling against dispatch and cancellation events. See
 [backup-restore.md](backup-restore.md).

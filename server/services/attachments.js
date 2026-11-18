@@ -187,7 +187,7 @@ export function canAccessAttachment(user, attachment) {
   });
 }
 
-// Stable across processes (serverless instances share the database snapshot), unlike a per-process random key.
+// Kept in the database, so links stay valid across restarts and instances, unlike a per-process random key.
 const fileSecret = () => process.env.CRM_FILE_SECRET || `files:${installSecret()}`;
 const fileSig = (id, userId, exp) => crypto.createHmac('sha256', fileSecret()).update(`${id}.${userId}.${exp}`).digest('base64url');
 

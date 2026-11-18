@@ -1,7 +1,7 @@
-// Clean installation (CRM_NO_DEMO=1): starts the server on an empty throwaway data folder and checks that
-// it holds no demo records — only the reference set-up (regions, product models without prices, object
-// categories, settings, dropdowns) and one administrator who must change the password at first sign-in. Also
-// checks the part of the schema the website reads (users: phone, role, active) as production starts.
+// Clean installation: starts the server on an empty throwaway data folder, exactly as a new installation
+// starts, and checks that it holds no sample records — only the reference set-up (regions, product models
+// without prices, object categories, settings, dropdowns) and one administrator who must change the password at
+// first sign-in. Also checks the part of the schema the website reads (users: phone, role, active).
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -25,7 +25,7 @@ const log = (ok, msg, extra = '') => {
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${msg}${extra ? ` — ${extra}` : ''}`);
 };
 
-const env = { ...process.env, CRM_DATA_DIR: dataDir, PORT, CRM_NO_DEMO: '1', CRM_ADMIN_EMAIL: EMAIL, CRM_ADMIN_PASSWORD: FIRST, CRM_NO_SCHEDULER: '1' };
+const env = { ...process.env, CRM_DATA_DIR: dataDir, PORT, CRM_ADMIN_EMAIL: EMAIL, CRM_ADMIN_PASSWORD: FIRST, CRM_NO_SCHEDULER: '1' };
 const server = spawn(process.execPath, ['--no-warnings=ExperimentalWarning', 'server/index.js'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
 let serverLog = '';
 server.stdout.on('data', (c) => { serverLog += c; });
@@ -48,12 +48,12 @@ try {
     if (Date.now() - started > 20000) throw new Error('server did not start in time');
     await new Promise((r) => setTimeout(r, 250));
   }
-  log(!/Restored the demo database/.test(serverLog), 'the demo snapshot is not restored');
-  log(/clean installation/i.test(serverLog), 'the server set up a clean installation');
+  log(/clean installation/i.test(serverLog) && !/sample|demo/i.test(serverLog), 'with no settings at all, the server sets up a clean installation');
   log(!serverLog.includes(FIRST), 'a supplied administrator password is not written to the log');
 
-  log((await json('/auth/info')).data?.demo === false, 'the sign-in page lists no demo accounts');
-  log((await json('/auth/login', { method: 'POST', body: { email: 'admin@veritek.example', password: 'Veritek@123' } })).status >= 400, 'the demo administrator cannot sign in');
+  const info = await json('/auth/info');
+  log(JSON.stringify(info.data) === '{"ok":true}', 'the public info endpoint says nothing about the installation', JSON.stringify(info.data));
+  log((await json('/auth/login', { method: 'POST', body: { email: 'admin@veritek.example', password: 'Veritek@123' } })).status >= 400, 'the sample administrator from the tests does not exist here');
   const first = await json('/auth/login', { method: 'POST', body: { email: EMAIL, password: FIRST } });
   log(Boolean(first.data?.token), 'the first administrator signs in with the supplied password');
   log(first.data?.user?.must_change_password === true && first.data?.user?.role === 'super_admin', 'the first administrator is a super admin who must change the password');
@@ -95,7 +95,7 @@ try {
     if (n > 0) filled.push([t, n]);
   }
   const unexpected = filled.filter(([t]) => !SETUP.has(t));
-  log(unexpected.length === 0, 'no demo records in any other table', unexpected.map(([t, n]) => `${t}: ${n}`).join(', '));
+  log(unexpected.length === 0, 'no sample records in any other table', unexpected.map(([t, n]) => `${t}: ${n}`).join(', '));
   log((await one('SELECT COUNT(*) AS n FROM users')) === 1, 'exactly one account');
   const actions = (await rowsOf('SELECT DISTINCT action FROM audit_events ORDER BY action')).map((a) => a.action).join(', ');
   log(actions === 'password_change, sign_in', 'the audit trail holds only this sign-in and password change', actions);

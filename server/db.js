@@ -11,11 +11,8 @@ import { Worker, MessageChannel, receiveMessageOnPort } from 'node:worker_thread
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const ROOT = path.join(here, '..');
 
-// Serverless platforms give a read-only bundle and a writable /tmp: a PGlite database lives there and is
-// restored from the snapshot shipped with the deployment on a cold start (the demo).
-export const EPHEMERAL = Boolean(process.env.VERCEL || process.env.CRM_EPHEMERAL);
 export const ENV = process.env.CRM_ENV || (process.env.NODE_ENV === 'production' ? 'production' : 'development');
-export const DATA_DIR = process.env.CRM_DATA_DIR || (EPHEMERAL ? '/tmp/veritek-data' : path.join(ROOT, 'data'));
+export const DATA_DIR = process.env.CRM_DATA_DIR || path.join(ROOT, 'data');
 export const FILE_DIR = path.join(DATA_DIR, 'files');
 fs.mkdirSync(FILE_DIR, { recursive: true });
 
@@ -37,19 +34,6 @@ function describeServer() {
   return `postgresql://${process.env.PGHOST}/${process.env.PGDATABASE || ''}${PG_SCHEMA ? ` (schema ${PG_SCHEMA})` : ''}`;
 }
 
-export const SNAPSHOT = path.join(ROOT, 'seed', 'veritek-demo.tar.gz');
-const SNAPSHOT_FILES = path.join(ROOT, 'seed', 'files');
-// Never for a real installation (CRM_NO_DEMO=1), and not for the seed script, which builds its own data.
-const SEED_SCRIPT = /[\\/]server[\\/]seed\.js$/.test(process.argv[1] || '');
-export const RESTORED_FROM_SNAPSHOT = !SEED_SCRIPT && !POSTGRES_SERVER && !fs.existsSync(PGLITE_DIR) && fs.existsSync(SNAPSHOT)
-  && process.env.CRM_NO_SNAPSHOT !== '1' && process.env.CRM_NO_DEMO !== '1';
-if (RESTORED_FROM_SNAPSHOT && fs.existsSync(SNAPSHOT_FILES)) {
-  for (const name of fs.readdirSync(SNAPSHOT_FILES)) {
-    const target = path.join(FILE_DIR, name);
-    if (!fs.existsSync(target)) fs.copyFileSync(path.join(SNAPSHOT_FILES, name), target);
-  }
-}
-
 // ------------------------------------------------------------------ the worker bridge
 const TIMEOUT_MS = Number(process.env.CRM_DB_TIMEOUT_MS) || 120000;
 let bridge = null;
@@ -59,7 +43,7 @@ function startBridge() {
   const signal = new Int32Array(new SharedArrayBuffer(4));
   const config = {
     url: PG_URL || null, pgEnv: PG_ENV, schema: PG_SCHEMA || null,
-    dataDir: POSTGRES_SERVER ? null : PGLITE_DIR, snapshot: RESTORED_FROM_SNAPSHOT ? SNAPSHOT : null,
+    dataDir: POSTGRES_SERVER ? null : PGLITE_DIR,
   };
   // execArgv: [] — the worker must not inherit the parent's flags (`-e`, `--watch`), which can stop it starting.
   const worker = new Worker(new URL('./db-worker.js', import.meta.url), { workerData: { port: port2, signal, config }, transferList: [port2], execArgv: [] });
@@ -292,21 +276,9 @@ export function migrate() {
   return pending;
 }
 
-/** Drops every table in the current schema (demo rebuilds only — the seed script guards real data). */
-export function dropAllTables() {
-  const tables = all('SELECT tablename FROM pg_tables WHERE schemaname = current_schema()').map((t) => t.tablename);
-  if (tables.length) exec(tables.map((t) => `DROP TABLE IF EXISTS "${t}" CASCADE;`).join('\n'));
-  columnCache.clear();
-}
-
 /** Size of the CRM's tables in bytes. */
 export function databaseBytes() {
   return Number(val("SELECT COALESCE(SUM(pg_total_relation_size(format('%I.%I', schemaname, tablename))), 0) FROM pg_tables WHERE schemaname = current_schema()") || 0);
-}
-
-/** Writes a PGlite data-folder snapshot (gzip tarball) to `file`. */
-export function dumpDatabase(file) {
-  return call('dump', { file }, 600000);
 }
 
 /** Google Cloud Storage request run by the worker (see storage.js). */

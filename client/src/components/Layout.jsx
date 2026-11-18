@@ -175,7 +175,6 @@ export default function Layout({ children }) {
   const [navOpen, setNavOpen] = useState(false);
   const [counts, setCounts] = useState({ followups: 0, queue: 0, unread: 0, approvals: 0 });
   const [theme, setTheme] = useTheme();
-  const [hideDemo, setHideDemo] = useState(false);
   const location = useLocation();
 
   useEffect(() => setNavOpen(false), [location.pathname]);
@@ -256,13 +255,6 @@ export default function Layout({ children }) {
             )}
           </Popover>
         </header>
-        {meta.demo && !hideDemo && (
-          <div className="banner" role="note">
-            <Icon name="info" size={15} />
-            <span className="grow"><strong>Demo data.</strong> All companies and records are fictional.{meta.ephemeral ? ' This demo server keeps changes only temporarily.' : ''}</span>
-            <button type="button" onClick={() => setHideDemo(true)} aria-label="Dismiss">×</button>
-          </div>
-        )}
         {user.must_change_password && location.pathname !== '/account' && (
           <div className="banner danger"><Icon name="lock" size={15} /><span className="grow">Please set your own password before continuing.</span><Link to="/account">Change password</Link></div>
         )}

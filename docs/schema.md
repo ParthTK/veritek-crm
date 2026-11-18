@@ -49,5 +49,5 @@ every 5 minutes. Its database user may read only these three columns, granted by
   needs a matching change in the website.
 - Change `users` only with plain `ALTER TABLE`. Never drop and recreate it, and never add a `REVOKE` or a
   default-privilege change that removes other roles' access to it.
-- Dropping the table loses the website's grant, and so do `npm run seed -- --reset --yes` and a restore into a
-  fresh schema. Afterwards, run `finder.sql` again.
+- Dropping the table loses the website's grant, and so does a restore into a fresh schema. Afterwards, run
+  `finder.sql` again. (The CRM's code never drops tables.)

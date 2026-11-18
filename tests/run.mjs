@@ -1,6 +1,7 @@
-// Seeds a throwaway database, starts the API on a spare port and runs the acceptance journey, the Objects &
-// QR suite and a read-only sweep of every endpoint against it, then checks a clean installation. The real
-// database is never touched.
+// Fills a throwaway database with the tests' sample data (tests/sample-data.mjs), starts the API on a spare port
+// and runs the acceptance journey, the Objects & QR suite, the flow and people suites and a read-only sweep of
+// every endpoint against it, then checks a clean installation. The real database is never touched, and the
+// throwaway folder is deleted at the end.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -34,8 +35,8 @@ async function waitForServer(url, timeoutMs = 20000) {
   }
 }
 
-console.log(`Seeding a test database in ${dataDir} …`);
-await run(['server/seed.js', '--reset'], { quiet: true });
+console.log(`Building the sample test data in ${dataDir} …`);
+await run(['tests/sample-data.mjs'], { quiet: true });
 
 const server = spawn(process.execPath, ['--no-warnings=ExperimentalWarning', 'server/index.js'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
 let serverLog = '';

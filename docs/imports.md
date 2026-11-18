@@ -1,7 +1,8 @@
 # Import templates
 
 Settings → Imports takes CSV or Excel files for **customers & contacts**, **enquiries** and **open order
-lines**. Each template downloads from that page (with a guide sheet explaining every column). Import in
+lines**. Each template downloads from that page as the column headings only (no example row, so nothing
+made-up can be imported by mistake), with a guide sheet explaining every column with an example. Import in
 that order — enquiries and orders find their customer by the *Source ID* given in the customer import.
 
 How an import runs:
@@ -28,7 +29,7 @@ measures. Dates may be `DD/MM/YYYY` or `YYYY-MM-DD`.
 | City | | | `Sharjah` |
 | Domestic / export | | `domestic` or `export`; blank = not classified (never guessed from the phone) | `export` |
 | Customer types | | `manufacturer; oem; dealer; distributor; end_user; other` | `oem` |
-| Owner email | | Accountable owner in this system; blank = the importer | `saurav@veritek.example` |
+| Owner email | | Accountable owner in this system; blank = the importer | `name@veritekindia.com` |
 | Contact name | | Main contact person | `Rashid Ali` |
 | Contact role | | Designation | `Purchase Manager` |
 | Phone | | With country code if possible | `+971 50 123 4567` |
@@ -54,7 +55,7 @@ automatically.
 | Received date | | Blank = unknown (not set to the import date) | `02/11/2026` |
 | Source | | `existing_customer, website, whatsapp, email, exhibition, field_visit, dealer_referral, outbound, other, unknown` | `exhibition` |
 | Event name | | Exhibition or campaign name | `Middle East Energy` |
-| Owner email | | Accountable owner | `kavya@veritek.example` |
+| Owner email | | Accountable owner | `name@veritekindia.com` |
 | Product code | | Product master code; unknown codes are kept as requirement text | `VIPS 70L` |
 | Requirement | | Short description when the product is not known | |
 | Quantity | | Blank = unknown | `100` |
@@ -74,7 +75,7 @@ automatically.
 | Customer name | ✓ | Used when there is no customer source ID | `Gulf Panel Co.` |
 | Customer PO | | | `GP/PO/2026/114` |
 | Order received date | | Blank = unknown | `01/11/2026` |
-| Sales owner email | | | `saurav@veritek.example` |
+| Sales owner email | | | `name@veritekindia.com` |
 | Product code | | | `VIPS 70L` |
 | Description / specification | | Used when the product code is unknown | |
 | Confirmed quantity | ✓ | Positive number | `100` |

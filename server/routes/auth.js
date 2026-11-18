@@ -16,8 +16,8 @@ r.post('/auth/login', h((req) => {
 
 r.get('/auth/me', requireAuth, h((req) => publicUser(req.user.raw)));
 
-// Whether this installation holds the fictional demo data (the login page then lists demo accounts).
-r.get('/auth/info', h(() => ({ demo: Boolean(get("SELECT 1 FROM users WHERE email LIKE '%@veritek.example' AND login_enabled = 1 LIMIT 1")) })));
+// Public and says nothing about the installation: lets a monitor (or the tests) see that the server is up.
+r.get('/auth/info', h(() => ({ ok: true })));
 
 r.post('/auth/logout', requireAuth, h((req) => {
   destroySession(req.token);
