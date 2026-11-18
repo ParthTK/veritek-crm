@@ -75,7 +75,7 @@ export function complaintInsights(query) {
   const since = query.from || addDays(today(), -365);
   const byProduct = all(`SELECT p.id, p.code, p.name, COUNT(*) AS complaints, COUNT(DISTINCT k.customer_id) AS customers,
       SUM(CASE WHEN k.status NOT IN ('resolved','closed') THEN 1 ELSE 0 END) AS open,
-      GROUP_CONCAT(DISTINCT k.category_code) AS categories,
+      string_agg(DISTINCT k.category_code, ',') AS categories,
       (SELECT COALESCE(SUM(dl.qty), 0) FROM dispatch_lines dl JOIN dispatches d ON d.id = dl.dispatch_id JOIN order_lines l ON l.id = dl.line_id
         WHERE d.status = 'posted' AND l.product_id = p.id) AS units_dispatched
     FROM complaints k JOIN products p ON p.id = k.product_id WHERE k.received_date >= ? GROUP BY p.id ORDER BY complaints DESC`, since)
@@ -93,15 +93,15 @@ export function complaintInsights(query) {
     FROM complaints WHERE received_date >= ? GROUP BY 1 ORDER BY 1`, since);
   const stats = get(`SELECT COUNT(*) AS count, SUM(CASE WHEN status NOT IN ('resolved','closed') THEN 1 ELSE 0 END) AS open,
       SUM(CASE WHEN severity = 'critical' AND status NOT IN ('resolved','closed') THEN 1 ELSE 0 END) AS critical_open,
-      AVG(CASE WHEN resolved_date IS NOT NULL THEN julianday(resolved_date) - julianday(received_date) END) AS avg_resolution_days,
+      AVG(CASE WHEN resolved_date IS NOT NULL THEN resolved_date::date - received_date::date END) AS avg_resolution_days,
       AVG(feedback_rating) AS avg_rating, COUNT(feedback_rating) AS rated, SUM(CASE WHEN warranty_status = 'in_warranty' THEN 1 ELSE 0 END) AS in_warranty
     FROM complaints WHERE received_date >= ?`, since);
   const overdueResponses = get(`SELECT COUNT(DISTINCT t.complaint_id) AS n FROM tasks t JOIN complaints k ON k.id = t.complaint_id
     WHERE t.status = 'open' AND t.due_date < ? AND k.status NOT IN ('resolved','closed')`, today()).n;
   const repeatSerials = all(`SELECT k.serial_batch, COUNT(*) AS count, MAX(c.company_name) AS company_name FROM complaints k JOIN customers c ON c.id = k.customer_id
-    WHERE k.serial_batch IS NOT NULL GROUP BY k.serial_batch HAVING count > 1 ORDER BY count DESC LIMIT 20`);
+    WHERE k.serial_batch IS NOT NULL GROUP BY k.serial_batch HAVING COUNT(*) > 1 ORDER BY count DESC LIMIT 20`);
   const repeatCustomers = all(`SELECT c.id, c.company_name, COUNT(*) AS count FROM complaints k JOIN customers c ON c.id = k.customer_id
-    WHERE k.received_date >= ? GROUP BY c.id HAVING count > 1 ORDER BY count DESC LIMIT 20`, since);
+    WHERE k.received_date >= ? GROUP BY c.id HAVING COUNT(*) > 1 ORDER BY count DESC LIMIT 20`, since);
   return {
     since, stats: { ...stats, overdue_responses: overdueResponses }, by_product: byProduct, by_category: byCategory, by_cause: byCause, by_month: byMonth,
     repeat_serials: repeatSerials, repeat_customers: repeatCustomers,

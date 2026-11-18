@@ -22,7 +22,7 @@ Conventions used throughout:
 | People & access | `users`, `sessions`, `sales_targets`, `pins` |
 | Products | `product_categories`, `products`, `product_options`, `product_documents` |
 | Customers | `customers`, `customer_aliases`, `duplicate_dismissals`, `customer_interests`, `taggings`, `contacts` |
-| Marketing | `campaigns` |
+| Marketing | `campaigns` (exhibitions and events), `exhibition_visits` (customers met, linked to the enquiry raised) |
 | Enquiries | `enquiries`, `enquiry_lines`, `reactivation_cases` |
 | Quotations | `quotations`, `quote_revisions` (line snapshot as JSON, totals, approval fields, issue evidence), `approvals` |
 | Orders | `orders`, `order_lines` (original / forecast / agreed dates, phase, status, quantities), `line_issues`, `order_updates`, `commitment_changes`, `communication_confirmations`, `cancellations` |

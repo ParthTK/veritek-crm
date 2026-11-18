@@ -20,7 +20,7 @@ r.get('/enquiries/suggest-owner', allow('enquiries.edit'), h((req) => {
 
 r.post('/enquiries', allow('enquiries.edit'), idempotent('enquiry.create', (req) => {
   if (req.body?.customer_id) assertCustomer(req.user, intId(req.body.customer_id));
-  return createEnquiry(req.body || {}, req.user);
+  return createEnquiry(req.body || {}, req.user, { requireExhibitionLink: true });
 }));
 
 r.get('/enquiries/:id', allow('enquiries.view'), h((req) => {
@@ -30,7 +30,7 @@ r.get('/enquiries/:id', allow('enquiries.view'), h((req) => {
 
 r.put('/enquiries/:id', allow('enquiries.edit'), h((req) => {
   assertEnquiry(req.user, id(req));
-  return updateEnquiry(id(req), req.body || {}, req.user);
+  return updateEnquiry(id(req), req.body || {}, req.user, { requireExhibitionLink: true });
 }));
 
 r.post('/enquiries/:id/stage', allow('enquiries.edit'), h((req) => {

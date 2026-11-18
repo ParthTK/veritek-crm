@@ -7,6 +7,7 @@ import { api } from '../api.js';
 import { useAuth } from '../auth.jsx';
 import { useApi, useSave, useUrlFilters } from '../lib/hooks.js';
 import { date, qty, todayLocal, downloadCsv } from '../lib/format.js';
+import { PaymentBadge } from '../components/domain.jsx';
 import {
   Badge, Button, Card, Chips, DataTable, Drawer, ErrorState, Field, Input, Modal, Notice, PageHeader, SaveStatus, SearchBox, Select, Textarea, useToast, EmptyState,
 } from '../components/ui.jsx';
@@ -33,7 +34,7 @@ export default function Dispatches() {
     { key: 'cust', label: 'Customer', render: (d) => <Link to={`/customers/${d.customer_id}`}>{d.company_name}</Link> },
     { key: 'items', label: 'Items', render: (d) => (
       <div className="stack-xs">
-        {d.lines.map((l, i) => <span key={i} className="small"><Link to={`/orders/${l.order_id}`}>{l.order_code}</Link> · {qty(l.qty, l.unit)} × {l.product}</span>)}
+        {d.lines.map((l, i) => <span key={i} className="small"><Link to={`/orders/${l.order_id}`}>{l.order_code}</Link> · {qty(l.qty, l.unit)} × {l.product} <PaymentBadge payment={l.payment} /></span>)}
       </div>
     ) },
     { key: 'date', label: 'Date', render: (d) => (d.status === 'planned' || d.status === 'cancelled'

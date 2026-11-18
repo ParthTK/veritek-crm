@@ -11,6 +11,7 @@ const Overview = lazy(() => import('./pages/Overview.jsx'));
 const WorkQueue = lazy(() => import('./pages/WorkQueue.jsx'));
 const Followups = lazy(() => import('./pages/Followups.jsx'));
 const Dashboard = lazy(() => import('./pages/Dashboard.jsx'));
+const Pipeline = lazy(() => import('./pages/Pipeline.jsx'));
 const PastCustomers = lazy(() => import('./pages/PastCustomers.jsx'));
 const Enquiries = lazy(() => import('./pages/Enquiries.jsx'));
 const EnquiryDetail = lazy(() => import('./pages/EnquiryDetail.jsx'));
@@ -106,6 +107,7 @@ const router = createBrowserRouter([
       { path: 'followups', element: g('tasks.edit', <Followups />) },
       { path: 'analytics', element: g('analytics.view', <Dashboard />) },
       { path: 'past-customers', element: g('past.view', <PastCustomers />) },
+      { path: 'pipeline', element: g(['enquiries.view', 'orders.view'], <Pipeline />) },
       { path: 'enquiries', element: g('enquiries.view', <Enquiries />) },
       { path: 'enquiries/:id', element: g('enquiries.view', <EnquiryDetail />) },
       { path: 'quotations', element: g('quotes.view', <Quotations />) },

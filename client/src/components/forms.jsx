@@ -505,6 +505,9 @@ export function EnquiryForm({ draft, onChange, onSaved }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d.customer?.id]);
   const sourceOpt = useOptions('enquiry_source').find((o) => o.value === d.source_code);
+  const exhibitions = meta.campaigns.filter((c) => c.type === 'exhibition');
+  const otherEvents = meta.campaigns.filter((c) => c.type !== 'exhibition');
+  const pickCampaign = (value) => set({ campaign_id: value, source_event: meta.campaigns.find((c) => String(c.id) === value)?.name || '' });
   const dup = save.error?.code === 'possible_duplicate' ? save.error.details.matches : null;
 
   const submit = (confirmNotDuplicate = false) => save.run(async (key) => {
@@ -516,7 +519,7 @@ export function EnquiryForm({ draft, onChange, onSaved }) {
         contacts: [{ name: nc.contact_name, phone: nc.phone, email: nc.email }],
       } : undefined,
       lines: d.lines.map((l) => ({ product_id: l.product_id, requirement: l.product_id ? undefined : l.requirement || 'Unspecified / needs clarification', spec: l.spec, qty: l.qty === '' ? null : Number(l.qty), unit: l.unit })),
-      source_code: d.source_code, source_event: d.source_event, campaign_id: d.campaign_id || undefined, owner_id: d.owner_id, requirement_note: d.note, received_at: fromLocalInput(d.received),
+      source_code: d.source_code, source_event: d.source_event, campaign_id: ['exhibition', 'campaign'].includes(d.source_code) ? d.campaign_id || undefined : undefined, owner_id: d.owner_id, requirement_note: d.note, received_at: fromLocalInput(d.received),
       next: { purpose: d.next_purpose, owner_id: d.owner_id, due_date: d.next_date }, attachment_ids: d.doc ? [d.doc.id] : undefined,
     };
     const res = await api.post('/enquiries', body, { key });
@@ -564,11 +567,15 @@ export function EnquiryForm({ draft, onChange, onSaved }) {
         <div><Button size="sm" icon="plus" onClick={() => set({ lines: [...d.lines, emptyLine()] })}>Add another product</Button></div>
       </div>
       <div className="form-grid">
-        <Field label="Source" required error={err(save, 'source_code')}><OptionSelect category="enquiry_source" value={d.source_code} onChange={(v) => set({ source_code: v })} /></Field>
-        {['exhibition', 'campaign'].includes(d.source_code) && meta.campaigns.length > 0 ? (
-          <Field label="Campaign / event" optional error={err(save, 'campaign_id')} hint="Counts towards the campaign's results"><Select value={d.campaign_id} onChange={(e) => { const cp = meta.campaigns.find((x) => String(x.id) === e.target.value); set({ campaign_id: e.target.value, source_event: cp ? cp.name : d.source_event }); }} placeholder="Choose the event" options={meta.campaigns.filter((x) => x.status !== 'cancelled').map((x) => ({ value: String(x.id), label: x.name }))} /></Field>
+        <Field label="Source" required error={err(save, 'source_code')}><OptionSelect category="enquiry_source" value={d.source_code} onChange={(v) => set({ source_code: v, campaign_id: '', source_event: '' })} /></Field>
+        {d.source_code === 'exhibition' ? (
+          <Field label="Exhibition" required error={err(save, 'campaign_id')} hint={exhibitions.length ? 'The enquiry counts towards this exhibition' : 'No exhibitions yet — add one under Exhibitions first'}>
+            <Select value={d.campaign_id} onChange={(e) => pickCampaign(e.target.value)} placeholder="Choose the exhibition" options={exhibitions.map((c) => ({ value: String(c.id), label: c.name }))} invalid={Boolean(err(save, 'campaign_id'))} />
+          </Field>
+        ) : d.source_code === 'campaign' && otherEvents.length > 0 ? (
+          <Field label="Event" optional error={err(save, 'campaign_id')} hint="Counts towards the event's results"><Select value={d.campaign_id} onChange={(e) => pickCampaign(e.target.value)} placeholder="Choose the event" options={otherEvents.map((c) => ({ value: String(c.id), label: c.name }))} /></Field>
         ) : (
-          <Field label={d.source_code === 'exhibition' ? 'Event name' : 'Event / detail'} optional={!sourceOpt?.requires_note} required={sourceOpt?.requires_note} error={err(save, 'source_event')}><Input value={d.source_event} onChange={(e) => set({ source_event: e.target.value })} /></Field>
+          <Field label="Source detail" optional={!sourceOpt?.requires_note} required={sourceOpt?.requires_note} error={err(save, 'source_event')}><Input value={d.source_event} onChange={(e) => set({ source_event: e.target.value })} /></Field>
         )}
         <Field label="Owner" required error={err(save, 'owner_id')}><UserSelect value={d.owner_id} onChange={(v) => set({ owner_id: v })} filter={(p) => ['admin', 'coordinator', 'sales'].includes(p.group)} invalid={Boolean(err(save, 'owner_id'))} /></Field>
         <Field label="Next action" error={err(save, 'next.purpose')}><PurposeInput value={d.next_purpose} onChange={(v) => set({ next_purpose: v })} /></Field>

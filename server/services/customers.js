@@ -131,7 +131,7 @@ export function setTags(customerId, names, user) {
   for (const name of list) {
     let tag = get('SELECT id FROM tags WHERE name = ? COLLATE NOCASE', name);
     if (!tag) tag = { id: insert('tags', { name, color: TAG_COLORS[(get('SELECT COUNT(*) AS n FROM tags').n) % TAG_COLORS.length] }) };
-    run("INSERT OR IGNORE INTO taggings (tag_id, entity, entity_id) VALUES (?, 'customer', ?)", tag.id, customerId);
+    run("INSERT INTO taggings (tag_id, entity, entity_id) VALUES (?, 'customer', ?) ON CONFLICT DO NOTHING", tag.id, customerId);
   }
   return list;
 }
@@ -140,7 +140,7 @@ export function setTags(customerId, names, user) {
 export function setInterests(customerId, categoryIds) {
   run('DELETE FROM customer_interests WHERE customer_id = ?', customerId);
   for (const cid of [...new Set((categoryIds || []).map(intId).filter(Boolean))]) {
-    if (get('SELECT id FROM product_categories WHERE id = ?', cid)) run('INSERT OR IGNORE INTO customer_interests (customer_id, category_id) VALUES (?, ?)', customerId, cid);
+    if (get('SELECT id FROM product_categories WHERE id = ?', cid)) run('INSERT INTO customer_interests (customer_id, category_id) VALUES (?, ?) ON CONFLICT DO NOTHING', customerId, cid);
   }
 }
 
@@ -248,7 +248,7 @@ export function createCustomer(input, user, { requireContactChannel = true, impo
       insert('customer_aliases', { customer_id: id, alias, alias_norm: normName(alias), kind: 'name', created_at: stamp, created_by: user.id });
     }
     for (const m of matches) {
-      run('INSERT OR IGNORE INTO duplicate_dismissals (customer_a, customer_b, reason, decided_by, decided_at) VALUES (?, ?, ?, ?, ?)',
+      run('INSERT INTO duplicate_dismissals (customer_a, customer_b, reason, decided_by, decided_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING',
         Math.min(id, m.id), Math.max(id, m.id), 'Confirmed as a separate company at creation', user.id, stamp);
     }
     history('customer', id, 'created', { customerId: id, data: { provisional: bool(input.provisional), duplicates_acknowledged: matches.map((m) => m.code) } });
@@ -366,7 +366,8 @@ export function setDoNotContact(customerId, input, user) {
 }
 
 export function dismissDuplicate(a, b, reason, user) {
-  run('INSERT OR REPLACE INTO duplicate_dismissals (customer_a, customer_b, reason, decided_by, decided_at) VALUES (?, ?, ?, ?, ?)', Math.min(a, b), Math.max(a, b), str(reason, 300) || 'Confirmed separate companies', user.id, nowIso());
+  run(`INSERT INTO duplicate_dismissals (customer_a, customer_b, reason, decided_by, decided_at) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT (customer_a, customer_b) DO UPDATE SET reason = EXCLUDED.reason, decided_by = EXCLUDED.decided_by, decided_at = EXCLUDED.decided_at`, Math.min(a, b), Math.max(a, b), str(reason, 300) || 'Confirmed separate companies', user.id, nowIso());
   audit('customer', a, 'not_duplicate', { other: b, reason });
 }
 
@@ -392,12 +393,14 @@ export function mergeCustomers(targetId, sourceId, reason, user) {
     if (get("SELECT id FROM reactivation_cases WHERE customer_id = ? AND closed_at IS NULL", targetId)) {
       run("UPDATE reactivation_cases SET status = 'not_pursuing', closure_reason_code = 'other', closure_note = 'Duplicate profile merged', closed_at = ? WHERE customer_id = ? AND closed_at IS NULL", stamp, sourceId);
     }
-    for (const table of MERGE_TABLES) moved[table] = Number(run(`UPDATE ${table} SET customer_id = ? WHERE customer_id = ?`, targetId, sourceId).changes);
-    run("INSERT OR IGNORE INTO taggings (tag_id, entity, entity_id) SELECT tag_id, 'customer', ? FROM taggings WHERE entity = 'customer' AND entity_id = ?", targetId, sourceId);
+    // Both companies may have visited the same exhibition: keep the surviving customer's record of it.
+    run('DELETE FROM exhibition_visits WHERE customer_id = ? AND campaign_id IN (SELECT campaign_id FROM exhibition_visits WHERE customer_id = ?)', sourceId, targetId);
+    for (const table of [...MERGE_TABLES, 'exhibition_visits']) moved[table] = Number(run(`UPDATE ${table} SET customer_id = ? WHERE customer_id = ?`, targetId, sourceId).changes);
+    run("INSERT INTO taggings (tag_id, entity, entity_id) SELECT tag_id, 'customer', ? FROM taggings WHERE entity = 'customer' AND entity_id = ? ON CONFLICT DO NOTHING", targetId, sourceId);
     run("DELETE FROM taggings WHERE entity = 'customer' AND entity_id = ?", sourceId);
-    run('INSERT OR IGNORE INTO customer_interests (customer_id, category_id) SELECT ?, category_id FROM customer_interests WHERE customer_id = ?', targetId, sourceId);
+    run('INSERT INTO customer_interests (customer_id, category_id) SELECT ?, category_id FROM customer_interests WHERE customer_id = ? ON CONFLICT DO NOTHING', targetId, sourceId);
     run('DELETE FROM customer_interests WHERE customer_id = ?', sourceId);
-    run("INSERT OR IGNORE INTO pins (user_id, entity_type, entity_id, created_at) SELECT user_id, 'customer', ?, created_at FROM pins WHERE entity_type = 'customer' AND entity_id = ?", targetId, sourceId);
+    run("INSERT INTO pins (user_id, entity_type, entity_id, created_at) SELECT user_id, 'customer', ?, created_at FROM pins WHERE entity_type = 'customer' AND entity_id = ? ON CONFLICT DO NOTHING", targetId, sourceId);
     run("DELETE FROM pins WHERE entity_type = 'customer' AND entity_id = ?", sourceId);
     insert('customer_aliases', { customer_id: targetId, alias: source.company_name, alias_norm: source.name_norm, kind: 'merged_name', created_at: stamp, created_by: user.id });
     insert('customer_aliases', { customer_id: targetId, alias: source.code, alias_norm: normName(source.code), kind: 'merged_code', created_at: stamp, created_by: user.id });
@@ -467,7 +470,7 @@ export function listCustomers(query, user) {
     params.push(query.country);
   }
   if (query.type) {
-    where.push("EXISTS (SELECT 1 FROM json_each(c.types) WHERE value = ?)");
+    where.push("COALESCE(NULLIF(c.types, ''), '[]')::jsonb @> jsonb_build_array(?::text)");
     params.push(query.type);
   }
   if (bool(query.provisional)) where.push('c.provisional = 1');
@@ -512,7 +515,7 @@ export function listCustomers(query, user) {
     `SELECT c.id, c.code, c.company_name, c.country_code, c.city, c.state, c.segment, c.types, c.provisional, c.do_not_contact, c.archived_at, c.owner_id,
       c.industry, c.value_category, c.region_id, c.credit_hold, rg.name AS region_name, u.name AS owner_name,
       ${HAS_ORDERS_SQL('c')} AS has_orders,
-      (SELECT GROUP_CONCAT(t.name, '|') FROM taggings g JOIN tags t ON t.id = g.tag_id WHERE g.entity = 'customer' AND g.entity_id = c.id) AS tag_names,
+      (SELECT string_agg(t.name::text, '|') FROM taggings g JOIN tags t ON t.id = g.tag_id WHERE g.entity = 'customer' AND g.entity_id = c.id) AS tag_names,
       ${EFFECTIVE_LAST_ORDER_SQL('c')} AS last_order_date,
       ${LAST_CONTACT_SQL('c')} AS last_contact_at,
       (SELECT COUNT(*) FROM enquiries e WHERE e.customer_id = c.id AND e.stage IN (${OPEN_ENQUIRY_STAGES.map((s) => `'${s}'`).join(',')})) AS open_enquiries,
@@ -731,7 +734,7 @@ export function getCustomerProfile(id, user) {
     WHERE a.customer_id = ? AND a.customer_contact = 1 AND a.meaningful = 1 ORDER BY a.occurred_at DESC LIMIT 1`, id);
   const lastAttempt = get(`SELECT a.occurred_at, a.channel, a.outcome FROM activities a WHERE a.customer_id = ? AND a.customer_contact = 1 ORDER BY a.occurred_at DESC LIMIT 1`, id);
   const enquiries = all(`SELECT e.id, e.code, e.stage, e.received_at, e.received_unknown, e.lost_reason_code, e.lost_note, e.decided_at, e.cancel_reason_code, u.name AS owner_name,
-      (SELECT GROUP_CONCAT(COALESCE(p.code, el.requirement), ', ') FROM enquiry_lines el LEFT JOIN products p ON p.id = el.product_id WHERE el.enquiry_id = e.id) AS products
+      (SELECT string_agg(COALESCE(p.code::text, el.requirement), ', ') FROM enquiry_lines el LEFT JOIN products p ON p.id = el.product_id WHERE el.enquiry_id = e.id) AS products
     FROM enquiries e LEFT JOIN users u ON u.id = e.owner_id WHERE e.customer_id = ? ORDER BY COALESCE(e.received_at, e.created_at) DESC`, id);
   const openOpps = enquiries.filter((e) => OPEN_ENQUIRY_STAGES.includes(e.stage)).length;
   const missedReasons = enquiries.filter((e) => e.stage === 'lost').map((e) => ({
@@ -783,7 +786,8 @@ export function getCustomerProfile(id, user) {
       value_category_label: labelOf(VALUE_CATEGORIES, c.value_category), acquisition_source_label: optionLabel('enquiry_source', c.acquisition_source),
     },
     quotations,
-    objects: all('SELECT id, public_id, name, serial_number, status, scan_count FROM objects WHERE customer_id = ? AND deleted_at IS NULL ORDER BY id DESC', id),
+    exhibition_visits: all(`SELECT v.id, v.campaign_id, v.visited_on, v.interest, v.notes, v.outcome, v.enquiry_id, cp.name AS exhibition, cp.location, e.code AS enquiry_code, u.name AS met_by_name
+      FROM exhibition_visits v JOIN campaigns cp ON cp.id = v.campaign_id LEFT JOIN enquiries e ON e.id = v.enquiry_id LEFT JOIN users u ON u.id = v.met_by WHERE v.customer_id = ? ORDER BY v.visited_on DESC`, id),
     complaints: all("SELECT id, code, status, severity, category_code, received_date FROM complaints WHERE customer_id = ? ORDER BY received_date DESC", id).map((k) => ({ ...k, category: optionLabel('complaint_category', k.category_code) })),
     contacts,
     summary: {
@@ -823,7 +827,7 @@ export function getCustomerProfile(id, user) {
 
 export function customerDocuments(customerId) {
   return all(`SELECT DISTINCT a.id, a.original_name, a.mime, a.size, a.uploaded_at, a.description, a.visibility, u.name AS uploaded_by_name,
-      (SELECT GROUP_CONCAT(l.entity_type || ':' || l.entity_id) FROM attachment_links l WHERE l.attachment_id = a.id) AS links
+      (SELECT string_agg(l.entity_type || ':' || l.entity_id, ',') FROM attachment_links l WHERE l.attachment_id = a.id) AS links
     FROM attachments a LEFT JOIN users u ON u.id = a.uploaded_by WHERE a.customer_id = ? ORDER BY a.uploaded_at DESC`, customerId);
 }
 
@@ -852,6 +856,13 @@ export function customerTimeline(customerId, { filter = 'all', limit = 200 } = {
       backdated: Date.parse(a.entered_at) - Date.parse(a.occurred_at) > 6 * 3600000, technical_issue: Boolean(a.technical_issue),
     });
   }
+  for (const v of all(`SELECT v.id, v.campaign_id, v.visited_on, v.interest, v.notes, v.created_at, cp.name AS exhibition, u.name AS met_by_name FROM exhibition_visits v
+    JOIN campaigns cp ON cp.id = v.campaign_id LEFT JOIN users u ON u.id = v.met_by WHERE v.customer_id = ?`, customerId)) {
+    items.push({
+      key: `xv${v.id}`, at: `${v.visited_on}T06:30:00.000Z`, entered_at: v.created_at, group: 'enquiries', icon: 'campaign', title: `Visited us at ${v.exhibition}`,
+      detail: [v.interest, v.notes].filter(Boolean).join(' — ') || null, ref: null, link: `/campaigns/${v.campaign_id}`, actor: v.met_by_name, backdated: false,
+    });
+  }
   for (const h of all(`SELECT h.*, u.name AS actor_name FROM history_events h LEFT JOIN users u ON u.id = h.actor_id WHERE h.customer_id = ? ORDER BY h.created_at DESC LIMIT 400`, customerId)) {
     const data = parseJson(h.data, {});
     const ref = h.entity_type === 'enquiry' ? get('SELECT code FROM enquiries WHERE id = ?', h.entity_id)?.code
@@ -876,7 +887,7 @@ export function customerTimeline(customerId, { filter = 'all', limit = 200 } = {
       backdated: Date.parse(u.entered_at) - Date.parse(u.occurred_at) > 6 * 3600000, historical: Boolean(u.historical),
     });
   }
-  for (const d of all(`SELECT d.*, GROUP_CONCAT(o.code || ': ' || dl.qty || ' × ' || COALESCE(p.code, l.description), '; ') AS summary, MIN(o.id) AS order_id
+  for (const d of all(`SELECT d.*, string_agg(o.code || ': ' || dl.qty || ' × ' || COALESCE(p.code::text, l.description), '; ') AS summary, MIN(o.id) AS order_id
       FROM dispatches d JOIN dispatch_lines dl ON dl.dispatch_id = d.id JOIN orders o ON o.id = dl.order_id JOIN order_lines l ON l.id = dl.line_id
       LEFT JOIN products p ON p.id = l.product_id WHERE d.customer_id = ? GROUP BY d.id ORDER BY d.dispatch_date DESC LIMIT 200`, customerId)) {
     const at = d.dispatch_date ? new Date(`${d.dispatch_date}T12:00:00+05:30`).toISOString() : d.created_at;

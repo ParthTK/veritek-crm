@@ -10,7 +10,7 @@ import { isInstant, localDate, workingDaysBetween, addWorkingDays, isDate } from
 import {
   SELECTABLE_PHASES, WORK_STATUSES, PHASES, labelOf, COMMITMENT_STATES, PRIORITIES, DISPATCH_STATUSES,
 } from '../../shared/constants.js';
-import { orderFinance } from './finance.js';
+import { orderFinance, paymentStatusByOrder } from './finance.js';
 import {
   lineQty, lineStatus, orderSummary, isBackwardMove, isPositive, round3, toMinor, lineValueMinor,
 } from '../../shared/rules.js';
@@ -471,7 +471,7 @@ export function getOrder(id, user) {
     holds,
     alerts,
     finance: hasPerm(user, 'finance.view') ? orderFinance(id) : null,
-    objects: all('SELECT id, public_id, name, serial_number, status FROM objects WHERE order_id = ? AND deleted_at IS NULL ORDER BY id', id),
+    payment: paymentStatusByOrder([id]).get(id) || null,
     complaints: all('SELECT id, code, status, category_code, received_date FROM complaints WHERE order_id = ? ORDER BY id DESC', id).map((k) => ({ ...k, category: optionLabel('complaint_category', k.category_code) })),
   };
 }
@@ -496,6 +496,22 @@ export function loadOrdersWithLines(where = [], params = [], user = null) {
   return orders.map((o) => ({ order: o, lines: byOrder.get(o.id) }));
 }
 
+/** How far an order has got: share of its net quantity built (ready or already dispatched) and dispatched. */
+function orderProgress(lines) {
+  let total = 0;
+  let built = 0;
+  let dispatched = 0;
+  for (const l of lines) {
+    const net = Math.max(0, l.quantities.confirmed - l.quantities.cancelled);
+    total += net;
+    dispatched += l.quantities.dispatched;
+    const ready = l.quantities.ready ?? (l.phase === 'ready' ? net : 0);
+    built += Math.min(net, Math.max(ready, l.quantities.dispatched));
+  }
+  const pct = (n) => (total > 0 ? Math.round((n / total) * 100) : 0);
+  return { ready_pct: pct(built), dispatched_pct: pct(dispatched) };
+}
+
 export function orderListRow(o, lines, pinnedIds = new Set()) {
   const day = today();
   const summary = orderSummary(o, lines, day);
@@ -511,7 +527,7 @@ export function orderListRow(o, lines, pinnedIds = new Set()) {
     id: o.id, code: o.code, status: o.status, customer_id: o.customer_id, customer_name: o.customer_name, customer_code: o.customer_code,
     segment: o.segment || o.customer_segment, country_code: o.country_code, po_reference: o.po_reference, owner_id: o.owner_id, owner_name: o.owner_name,
     received_date: o.received_date, confirmed_at: o.confirmed_at, closed_at: o.closed_at, currency: o.currency, version: o.version,
-    priority: o.priority, factory_id: o.factory_id,
+    priority: o.priority, factory_id: o.factory_id, enquiry_id: o.enquiry_id, quote_revision_id: o.quote_revision_id, progress: orderProgress(decorated),
     phase: summary.phase, outcome: summary.outcome, totals: summary.totals, earliest_due: summary.earliest_due, latest_due: summary.latest_due,
     active: summary.active, overdue: summary.overdue, at_risk: summary.at_risk, delayed: summary.delayed, issue: summary.issue, uncommitted: summary.uncommitted,
     max_days_late: Math.max(0, ...active.map((l) => l.status.daysLate || 0)),
@@ -599,6 +615,8 @@ export function listOrders(query, user) {
   }
   const pinned = new Set(all("SELECT entity_id FROM pins WHERE user_id = ? AND entity_type = 'order'", user.id).map((r) => r.entity_id));
   let rows = loadOrdersWithLines(where, params, user).map(({ order, lines }) => orderListRow(order, lines, pinned));
+  const payments = paymentStatusByOrder(rows.map((r) => r.id));
+  rows = rows.map((r) => ({ ...r, payment: payments.get(r.id) || null }));
   const counts = Object.fromEntries(Object.entries(STATE_FILTERS).map(([k, fn]) => [k, rows.filter(fn).length]));
   if (query.state && STATE_FILTERS[query.state]) rows = rows.filter(STATE_FILTERS[query.state]);
   const rank = (r) => (r.overdue ? 0 : r.at_risk ? 1 : r.comm_pending ? 2 : r.issue ? 3 : r.stale_lines ? 4 : r.ready_waiting ? 5 : 6);
@@ -1229,11 +1247,15 @@ export function listDispatches(query, user) {
   const lines = rows.length ? all(`SELECT dl.id, dl.line_id, dl.dispatch_id, dl.qty, l.unit, l.line_no, o.code AS order_code, o.id AS order_id, COALESCE(p.code, l.description) AS product
     FROM dispatch_lines dl JOIN order_lines l ON l.id = dl.line_id JOIN orders o ON o.id = dl.order_id LEFT JOIN products p ON p.id = l.product_id
     WHERE dl.dispatch_id IN (${placeholders(rows.map((r) => r.id))})`, rows.map((r) => r.id)) : [];
+  const dispatchPayments = paymentStatusByOrder(lines.map((l) => l.order_id));
   const counts = get(`SELECT SUM(CASE WHEN status = 'planned' THEN 1 ELSE 0 END) AS planned,
       SUM(CASE WHEN status = 'posted' AND delivered_at IS NULL THEN 1 ELSE 0 END) AS in_transit,
       SUM(CASE WHEN status = 'posted' AND notify_state = 'pending' THEN 1 ELSE 0 END) AS not_informed FROM dispatches`);
   return {
-    rows: rows.map((d) => ({ ...d, status_label: labelOf(DISPATCH_STATUSES, d.status), lines: lines.filter((l) => l.dispatch_id === d.id) })),
+    rows: rows.map((d) => {
+      const own = lines.filter((l) => l.dispatch_id === d.id);
+      return { ...d, status_label: labelOf(DISPATCH_STATUSES, d.status), lines: own.map((l) => ({ ...l, payment: dispatchPayments.get(l.order_id) ? { code: dispatchPayments.get(l.order_id).code, label: dispatchPayments.get(l.order_id).label, tone: dispatchPayments.get(l.order_id).tone } : null })) };
+    }),
     counts: { planned: counts.planned || 0, in_transit: counts.in_transit || 0, not_informed: counts.not_informed || 0 },
   };
 }
@@ -1251,6 +1273,7 @@ export function productionBoard(query, user) {
     params.push(query.priority);
   }
   const data = loadOrdersWithLines(where, params, user);
+  const payments = paymentStatusByOrder(data.map((d) => d.order.id));
   const columns = SELECTABLE_PHASES.map((p) => ({ phase: p, label: labelOf(PHASES, p), lines: [] }));
   for (const { order, lines } of data) {
     for (const raw of lines) {
@@ -1267,6 +1290,7 @@ export function productionBoard(query, user) {
         issue_code: l.issue_code, issue_label: l.issue_label, stage_note: l.stage_note, qc_summary: l.qc_summary, stale: Boolean(l.freshness?.stale), freshness: l.freshness,
         needs_clarification: Boolean(l.needs_clarification), action_task_id: l.action_task_id, version: l.version, phase: l.phase,
         ready_qty: l.ready_qty, hold_review_date: l.hold_review_date,
+        payment: payments.has(order.id) ? { code: payments.get(order.id).code, label: payments.get(order.id).label, tone: payments.get(order.id).tone } : null,
       });
     }
   }
@@ -1289,7 +1313,7 @@ export function orderTracking(trackingToken) {
     };
   });
   const dispatches = all(`SELECT d.code, d.dispatch_date, d.carrier, d.tracking_no, d.tracking_url, d.expected_arrival, d.delivered_at,
-      (SELECT GROUP_CONCAT(COALESCE(p.code, l.description) || ' × ' || dl.qty, ', ') FROM dispatch_lines dl JOIN order_lines l ON l.id = dl.line_id LEFT JOIN products p ON p.id = l.product_id WHERE dl.dispatch_id = d.id) AS items
+      (SELECT string_agg(COALESCE(p.code::text, l.description) || ' × ' || dl.qty, ', ') FROM dispatch_lines dl JOIN order_lines l ON l.id = dl.line_id LEFT JOIN products p ON p.id = l.product_id WHERE dl.dispatch_id = d.id) AS items
     FROM dispatches d WHERE d.status = 'posted' AND d.id IN (SELECT dispatch_id FROM dispatch_lines WHERE order_id = ?) ORDER BY d.dispatch_date`, o.id);
   const notes = all('SELECT note, occurred_at FROM order_updates WHERE order_id = ? AND customer_visible = 1 ORDER BY occurred_at DESC LIMIT 20', o.id);
   const sum = orderSummary(o, all('SELECT * FROM order_lines WHERE order_id = ?', o.id), today());

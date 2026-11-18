@@ -1,6 +1,6 @@
 // Administration: people and access, settings, dropdown governance, master lists, audit and health.
-import fs from 'node:fs';
-import { all, get, insert, run, tx, update, DB_PATH } from '../db.js';
+import { all, get, insert, run, tx, update, DB_PATH, POSTGRES_SERVER, databaseBytes } from '../db.js';
+import { STORAGE_LABEL } from '../storage.js';
 import {
   Check, badRequest, conflict, notFound, nowIso, str, intId, bool, audit, history, setSetting, settings, resetDropdownCache, dropdowns, normEmail,
 } from '../util.js';
@@ -15,9 +15,12 @@ import { listBackups } from './backup.js';
 /** Adds any default dropdown values that are missing. Existing labels and active flags are never touched. */
 export function ensureDropdownDefaults() {
   const stamp = nowIso();
+  // Runs at every start: one read, and writes only for values that are really missing.
+  const have = new Set(all('SELECT category, code FROM dropdown_options').map((r) => `${r.category}|${r.code}`));
   for (const [category, def] of Object.entries(DROPDOWNS)) {
     def.options.forEach((o, i) => {
-      run(`INSERT OR IGNORE INTO dropdown_options (category, code, label, active, sort_order, requires_note, system, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, 1, ?, ?)`,
+      if (have.has(`${category}|${o.code}`)) return;
+      run(`INSERT INTO dropdown_options (category, code, label, active, sort_order, requires_note, system, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, 1, ?, ?) ON CONFLICT DO NOTHING`,
         category, o.code, o.label, (i + 1) * 10, o.note ? 1 : 0, stamp, stamp);
     });
   }
@@ -34,7 +37,7 @@ const USAGE = {
   cancel_reason: ['SELECT COUNT(*) AS n FROM cancellations WHERE reason_code = ?'],
   reactivation_close_reason: ['SELECT COUNT(*) AS n FROM reactivation_cases WHERE closure_reason_code = ?'],
   channel: ['SELECT COUNT(*) AS n FROM activities WHERE channel = ?'],
-  customer_type: ["SELECT COUNT(*) AS n FROM customers, json_each(customers.types) WHERE json_each.value = ?"],
+  customer_type: ["SELECT COUNT(*) AS n FROM customers WHERE COALESCE(NULLIF(types, ''), '[]')::jsonb @> jsonb_build_array(?::text)"],
   unit: ['SELECT COUNT(*) AS n FROM order_lines WHERE unit = ?', 'SELECT COUNT(*) AS n FROM enquiry_lines WHERE unit = ?', 'SELECT COUNT(*) AS n FROM products WHERE default_unit = ?'],
   order_source: ['SELECT COUNT(*) AS n FROM orders WHERE source_code = ?'],
   complaint_category: ['SELECT COUNT(*) AS n FROM complaints WHERE category_code = ?'],
@@ -465,7 +468,7 @@ export function listAudit(query) {
 export function systemHealth() {
   const runs = all('SELECT * FROM scheduler_runs ORDER BY id DESC LIMIT 15').map((r) => ({ ...r, summary: r.summary ? JSON.parse(r.summary) : null, error: r.error ? JSON.parse(r.error) : null }));
   return {
-    database: { path: DB_PATH, bytes: fs.existsSync(DB_PATH) ? fs.statSync(DB_PATH).size : null, migrations: all('SELECT * FROM schema_migrations ORDER BY version') },
+    database: { path: DB_PATH, engine: POSTGRES_SERVER ? 'PostgreSQL (Cloud SQL)' : 'PostgreSQL (embedded PGlite)', bytes: databaseBytes(), documents: STORAGE_LABEL, migrations: all('SELECT * FROM schema_migrations ORDER BY version') },
     scheduler: { settings: settings().scheduler, runs, open_alerts: all('SELECT rule, COUNT(*) AS n FROM alerts WHERE resolved_at IS NULL GROUP BY rule') },
     backups: { settings: settings().backup, list: listBackups() },
     errors: all('SELECT * FROM error_log ORDER BY id DESC LIMIT 30'),

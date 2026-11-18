@@ -5,7 +5,7 @@
 // Advances are received against an order before invoicing and can later be adjusted against an invoice.
 import { all, get, insert, run, tx, update } from '../db.js';
 import {
-  Check, badRequest, conflict, notFound, nowIso, today, str, intId, audit, history, setSetting, settings, outstandingSql,
+  Check, badRequest, conflict, notFound, nowIso, today, str, intId, audit, history, setSetting, settings, outstandingSql, placeholders,
 } from '../util.js';
 import { CURRENCIES, PAYMENT_MODES } from '../../shared/constants.js';
 import { addDays, daysBetween } from '../../shared/dates.js';
@@ -137,6 +137,39 @@ export function pendingAdvances(user) {
     FROM orders o JOIN customers c ON c.id = o.customer_id
     WHERE o.status = 'confirmed' AND o.closed_at IS NULL AND o.advance_required_minor > 0 ${scope ? `AND ${scope}` : ''}
     ORDER BY o.received_date`).filter((o) => o.advance_received_minor < o.advance_required_minor);
+}
+
+/**
+ * One plain payment status per order, for order lists, the production board and the sales pipeline. The checks
+ * run from most to least urgent. Amounts are in the order's currency and are hidden from roles without values.
+ */
+export function paymentStatusByOrder(orderIds) {
+  const out = new Map();
+  const ids = [...new Set(orderIds)].filter(Boolean);
+  if (!ids.length) return out;
+  const ph = placeholders(ids);
+  const day = today();
+  const advances = new Map(all(`SELECT order_id, SUM(amount_minor + tds_minor + other_deduction_minor) AS n FROM receipts WHERE order_id IN (${ph}) AND kind = 'advance' AND reversed_at IS NULL GROUP BY order_id`, ids).map((r) => [r.order_id, r.n]));
+  const holds = new Map(all(`SELECT order_id, reason FROM payment_holds WHERE order_id IN (${ph}) AND released_at IS NULL`, ids).map((h) => [h.order_id, h.reason]));
+  const invoices = all(`SELECT i.order_id, i.gross_minor, i.due_date, ${OUTSTANDING()} AS outstanding_minor FROM invoices i WHERE i.order_id IN (${ph})`, ids);
+  for (const o of all(`SELECT id, currency, advance_required_minor FROM orders WHERE id IN (${ph})`, ids)) {
+    const mine = invoices.filter((i) => i.order_id === o.id);
+    const outstanding = mine.reduce((s, i) => s + Math.max(0, i.outstanding_minor), 0);
+    const overdue = mine.some((i) => i.outstanding_minor > 0 && i.due_date && i.due_date < day);
+    const required = o.advance_required_minor || 0;
+    const received = advances.get(o.id) || 0;
+    let state = ['not_invoiced', 'Not invoiced yet', 'slate'];
+    if (holds.has(o.id)) state = ['on_hold', 'Payment hold', 'red'];
+    else if (overdue) state = ['overdue', 'Payment overdue', 'red'];
+    else if (required > received && !mine.length) state = ['advance_pending', 'Advance pending', 'amber'];
+    else if (mine.length) state = outstanding > 0 ? ['invoiced', 'Invoice unpaid', 'blue'] : ['paid', 'Paid', 'green'];
+    else if (required > 0) state = ['advance_received', 'Advance received', 'green'];
+    out.set(o.id, {
+      code: state[0], label: state[1], tone: state[2], hold_reason: holds.get(o.id) ?? null, currency: o.currency,
+      advance_required_minor: required, advance_received_minor: received, invoiced_minor: mine.reduce((s, i) => s + i.gross_minor, 0), outstanding_minor: outstanding,
+    });
+  }
+  return out;
 }
 
 /** Money side of one order: value from lines, advance, invoices and receipts — all in the order currency. */

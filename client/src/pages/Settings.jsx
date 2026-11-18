@@ -222,7 +222,6 @@ function Commercial() {
       <ApprovalsCard approvals={data.approvals} onSave={(b) => saveSection('approvals', b)} />
       <QuotationCard quotation={data.quotation} onSave={(b) => saveSection('quotation', b)} />
       <RemindersCard reminders={data.reminders} onSave={(b) => saveSection('reminders', b)} />
-      <ObjectsCard objects={data.objects} onSave={(b) => saveSection('objects', b)} />
       <Card title="Products & price list"><div className="small muted">Models, prices, minimum price, cost, GST, configurator options and datasheets are managed on the Products page.</div><div className="mt-12"><Button to="/products" icon="products">Open products & prices</Button></div></Card>
     </div>
   );
@@ -306,7 +305,7 @@ function RemindersCard({ reminders, onSave }) {
   );
 }
 
-function ObjectsCard({ objects, onSave }) {
+export function ObjectsCard({ objects, onSave }) {
   const [f, setF] = useState(objects);
   const set = (p) => setF((x) => ({ ...x, ...p }));
   return (
@@ -444,7 +443,8 @@ function Rules() {
       <CalendarCard cal={data.calendar} onSave={(b) => saveSection('calendar', b)} />
       <SectionCard title="Reminder & alert rules" sub="proposed pilot defaults — confirm with Veritek" values={data.rules} onSave={(b) => saveSection('rules', b)} fields={[
         ['dormantDays', 'Past customer after (days without a confirmed order)'], ['staleWorkingDays', 'Order update is stale after (working days)'], ['readyGraceWorkingDays', 'Ready but not dispatched after (working days)'],
-        ['enquiryResponseWorkingDays', 'First response due within (working days)'], ['escalateAfterWorkingDays', 'Escalate overdue blocker actions after (working days)'],
+        ['enquiryResponseWorkingDays', 'Enquiry reply due within (working days)'], ['pipelineQuoteDraftWorkingDays', 'Pipeline: quotation to be sent within (working days)'], ['pipelineQuoteDecisionWorkingDays', 'Pipeline: customer decision expected within (working days)'],
+        ['pipelineConfirmationWorkingDays', 'Pipeline: order to be confirmed within (working days)'], ['pipelineAdvanceWorkingDays', 'Pipeline: advance expected within (working days)'], ['escalateAfterWorkingDays', 'Escalate overdue blocker actions after (working days)'],
         ['reactivationDailyCapPerOwner', 'Automatic reconnect tasks per owner per day'], ['noteMaxLength', 'Maximum note length (characters)'],
       ]} />
       <Card title="Access policy">

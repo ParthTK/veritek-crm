@@ -66,8 +66,9 @@ function Tooltip({ tip, width }) {
 /**
  * Vertical columns. series: [{ key, label }]. `target` draws a tick per column (e.g. monthly target).
  * `colorIndex` lets a series keep its entity colour when others are filtered out.
+ * With nothing above zero to draw, `empty` is shown instead of a flat chart with a meaningless axis.
  */
-export function ColumnChart({ data = [], x, series, format, height = 240, stacked = false, target, xFormat = (v) => v, emphasize }) {
+export function ColumnChart({ data = [], x, series, format, height = 240, stacked = false, target, xFormat = (v) => v, emphasize, empty = 'Nothing recorded yet' }) {
   const [ref, width] = useElementWidth();
   const [tip, setTip] = useState(null);
   const [hover, setHover] = useState(null);
@@ -98,11 +99,12 @@ export function ColumnChart({ data = [], x, series, format, height = 240, stacke
     });
   };
 
+  const nothing = !(maxVal > 0);
   return (
     <div>
-      <Legend items={legend} />
+      {!nothing && <Legend items={legend} />}
       <div className="chart" ref={ref} style={{ height }} onMouseLeave={() => { setTip(null); setHover(null); }}>
-        {width > 0 && (
+        {nothing ? <div className="chart-empty">{empty}</div> : width > 0 && (
           <svg width={width} height={height} role="img" aria-label={`Chart of ${series.map((s) => s.label).join(', ')}`}>
             {Array.from({ length: Math.round(max / step) + 1 }, (_, i) => i * step).map((v) => (
               <g key={v}>
@@ -153,8 +155,8 @@ export function ColumnChart({ data = [], x, series, format, height = 240, stacke
   );
 }
 
-/** Horizontal bars with category labels on the left; good for long names. */
-export function BarChartH({ data = [], label, series, format, limit, stacked = false, onSelect }) {
+/** Horizontal bars with category labels on the left; good for long names. `empty` shows when there are no rows. */
+export function BarChartH({ data = [], label, series, format, limit, stacked = false, onSelect, empty = 'Nothing recorded yet' }) {
   const [ref, width] = useElementWidth();
   const [tip, setTip] = useState(null);
   const rows = limit ? data.slice(0, limit) : data;
@@ -164,7 +166,7 @@ export function BarChartH({ data = [], label, series, format, limit, stacked = f
   const plotW = Math.max(10, width - labelW - valueW - 12);
   const totals = rows.map((d) => (stacked ? series.reduce((s, se) => s + (Number(d[se.key]) || 0), 0) : Math.max(0, ...series.map((se) => Number(d[se.key]) || 0))));
   const max = Math.max(...totals, 0) || 1;
-  const height = rows.length * rowH + 4;
+  const height = rows.length ? rows.length * rowH + 4 : 96;
   const barH = stacked || series.length === 1 ? 12 : 10;
 
   const showTip = (d, evt) => {
@@ -177,9 +179,9 @@ export function BarChartH({ data = [], label, series, format, limit, stacked = f
 
   return (
     <div>
-      <Legend items={series.map((s, i) => ({ label: s.label, color: seriesColor(s.colorIndex ?? i) }))} />
+      {rows.length > 0 && <Legend items={series.map((s, i) => ({ label: s.label, color: seriesColor(s.colorIndex ?? i) }))} />}
       <div className="chart" ref={ref} style={{ height }} onMouseLeave={() => setTip(null)}>
-        {width > 0 && (
+        {!rows.length ? <div className="chart-empty">{empty}</div> : width > 0 && (
           <svg width={width} height={height} role="img" aria-label="Bar chart">
             <line className="axis-line" x1={labelW} x2={labelW} y1={0} y2={height} />
             {rows.map((d, i) => {
@@ -219,8 +221,8 @@ export function BarChartH({ data = [], label, series, format, limit, stacked = f
   );
 }
 
-/** Multi-series line chart with a snapping crosshair and one tooltip for all series. */
-export function LineChart({ data = [], x, series, format, height = 220, xFormat = (v) => v }) {
+/** Multi-series line chart with a snapping crosshair and one tooltip for all series. `empty` shows when all values are zero. */
+export function LineChart({ data = [], x, series, format, height = 220, xFormat = (v) => v, empty = 'Nothing recorded yet' }) {
   const [ref, width] = useElementWidth();
   const [idx, setIdx] = useState(null);
   const margin = { top: 12, right: 16, bottom: 28, left: 50 };
@@ -239,11 +241,12 @@ export function LineChart({ data = [], x, series, format, height = 220, xFormat 
     setIdx(Math.max(0, Math.min(data.length - 1, i)));
   };
 
+  const nothing = !(maxVal > 0);
   return (
     <div>
-      <Legend items={series.map((s, i) => ({ label: s.label, color: seriesColor(s.colorIndex ?? i), type: 'line' }))} />
-      <div className="chart" ref={ref} style={{ height }} onMouseMove={onMove} onMouseLeave={() => setIdx(null)}>
-        {width > 0 && (
+      {!nothing && <Legend items={series.map((s, i) => ({ label: s.label, color: seriesColor(s.colorIndex ?? i), type: 'line' }))} />}
+      <div className="chart" ref={ref} style={{ height }} onMouseMove={nothing ? undefined : onMove} onMouseLeave={() => setIdx(null)}>
+        {nothing ? <div className="chart-empty">{empty}</div> : width > 0 && (
           <svg width={width} height={height} role="img" aria-label={`Line chart of ${series.map((s) => s.label).join(', ')}`}>
             {Array.from({ length: Math.round(max / step) + 1 }, (_, i) => i * step).map((v) => (
               <g key={v}>

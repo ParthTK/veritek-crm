@@ -3,14 +3,13 @@
 // object id; nothing internal (costs, margins, notes) is ever returned.
 import { Router } from 'express';
 import crypto from 'node:crypto';
-import fs from 'node:fs';
 import { get } from '../db.js';
 import { HttpError, notFound, settings, installSecret } from '../util.js';
 import { h } from './helpers.js';
 import { portalQuotation, portalRespond } from '../services/quotes.js';
 import { orderTracking } from '../services/orders.js';
 import {
-  checkObjectPassword, publicView, recordScan, objectFiles, objectSettings, filePath,
+  checkObjectPassword, publicView, recordScan, objectFiles, objectSettings, fileData,
 } from '../services/objects.js';
 import { xlsxToSheets, docxToBlocks, csvToRows, previewKind } from '../lib/docpreview.js';
 
@@ -102,9 +101,9 @@ function publicFile(req) {
   if (o.visibility === 'password' && !unlockValid(o.id, req.query.unlock)) throw new HttpError(401, 'Password required');
   const file = objectFiles(o.id, { includePrivate: false }).find((f) => f.id === Number(req.params.fileId));
   if (!file) throw notFound('Document');
-  const onDisk = filePath(file);
-  if (!fs.existsSync(onDisk)) throw notFound('Document');
-  return { object: o, file, onDisk };
+  const data = fileData(file);
+  if (!data) throw notFound('Document');
+  return { object: o, file, data };
 }
 
 /** The object's own photo, shown at the top of the scan page. */
@@ -115,11 +114,12 @@ r.get('/objects/:publicId/image', (req, res, next) => {
     if (o.visibility === 'private') throw new HttpError(403, 'This object is private');
     if (o.visibility === 'password' && !unlockValid(o.id, req.query.unlock)) throw new HttpError(401, 'Password required');
     const a = get('SELECT * FROM attachments WHERE id = ?', o.image_attachment_id);
-    if (!a || !/^image\//.test(a.mime || '') || !fs.existsSync(filePath(a))) throw notFound('Image');
+    const data = a && /^image\//.test(a.mime || '') ? fileData(a) : null;
+    if (!data) throw notFound('Image');
     res.setHeader('Content-Type', a.mime);
     res.setHeader('Cache-Control', 'public, max-age=300');
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    fs.createReadStream(filePath(a)).pipe(res);
+    res.send(data);
   } catch (err) {
     next(err);
   }
@@ -127,14 +127,14 @@ r.get('/objects/:publicId/image', (req, res, next) => {
 
 r.get('/objects/:publicId/files/:fileId/raw', (req, res, next) => {
   try {
-    const { file, onDisk } = publicFile(req);
+    const { file, data } = publicFile(req);
     const inline = /^(image\/(png|jpeg|gif|webp)|video\/(mp4|webm|quicktime)|application\/pdf)$/.test(file.mime || '') && !req.query.download;
     res.setHeader('Content-Type', file.mime || 'application/octet-stream');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox");
     res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(file.original_name)}`);
     res.setHeader('Cache-Control', 'private, max-age=60');
-    fs.createReadStream(onDisk).pipe(res);
+    res.send(data);
   } catch (err) {
     next(err);
   }
@@ -143,13 +143,13 @@ r.get('/objects/:publicId/files/:fileId/raw', (req, res, next) => {
 /** Parsed content for documents the browser cannot display itself (Excel, Word, CSV, text). */
 r.get('/objects/:publicId/files/:fileId/preview', (req, res, next) => {
   try {
-    const { file, onDisk } = publicFile(req);
+    const { file, data } = publicFile(req);
     const kind = previewKind(file.mime, file.original_name);
     try {
-      if (kind === 'sheet') return res.json({ kind, sheets: xlsxToSheets(fs.readFileSync(onDisk)) });
-      if (kind === 'csv') return res.json({ kind, sheets: [{ name: file.original_name, rows: csvToRows(fs.readFileSync(onDisk, 'utf8')) }] });
-      if (kind === 'doc') return res.json({ kind, ...docxToBlocks(fs.readFileSync(onDisk)) });
-      if (kind === 'text') return res.json({ kind, text: fs.readFileSync(onDisk, 'utf8').slice(0, 100000) });
+      if (kind === 'sheet') return res.json({ kind, sheets: xlsxToSheets(data) });
+      if (kind === 'csv') return res.json({ kind, sheets: [{ name: file.original_name, rows: csvToRows(data.toString('utf8')) }] });
+      if (kind === 'doc') return res.json({ kind, ...docxToBlocks(data) });
+      if (kind === 'text') return res.json({ kind, text: data.toString('utf8').slice(0, 100000) });
     } catch (err) {
       return res.json({ kind: 'download', error: err.message });
     }

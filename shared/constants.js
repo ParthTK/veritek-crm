@@ -127,7 +127,7 @@ export const PERMISSION_LABELS = {
   'reports.view': 'Reports', 'export.lists': 'Export lists', 'export.full': 'Full data export', 'imports.run': 'Run imports', 'attachments.upload': 'Upload documents',
   'finance.view': 'View invoices and receipts', 'finance.edit': 'Record invoices and receipts', 'finance.holds': 'Payment holds',
   'complaints.view': 'View complaints', 'complaints.edit': 'Handle complaints', 'products.view': 'View products & price list', 'products.edit': 'Edit products & prices',
-  'campaigns.view': 'View campaigns', 'campaigns.edit': 'Manage campaigns', 'objects.view': 'View objects & QR', 'objects.edit': 'Edit objects & QR', 'objects.manage': 'Delete objects / templates',
+  'campaigns.view': 'View exhibitions & campaigns', 'campaigns.edit': 'Manage exhibitions & campaigns', 'objects.view': 'View objects & QR', 'objects.edit': 'Edit objects & QR', 'objects.manage': 'Delete objects / templates',
   'team.view': 'Team, approvals & targets', 'targets.edit': 'Set sales targets', 'users.manage': 'Users and access', 'pins.manage': 'Pin records to the overview',
   'settings.manage': 'Settings', 'audit.view': 'Audit trail',
 };
@@ -156,6 +156,16 @@ export const OPEN_ENQUIRY_STAGES = ENQUIRY_STAGES.filter((s) => s.open).map((s) 
 // The pipeline board shows open stages as columns, in this order.
 export const PIPELINE_STAGES = ['new', 'clarification', 'quote_to_prepare', 'quote_sent', 'awaiting_decision', 'on_hold'];
 
+// The whole sales journey. Every live enquiry or order sits at exactly one of these steps.
+export const JOURNEY_STAGES = [
+  opt('enquiry', 'Enquiry'),
+  opt('quotation', 'Quotation'),
+  opt('confirmation', 'Confirmation'),
+  opt('payment', 'Payment'),
+  opt('production', 'Production'),
+  opt('dispatch', 'Dispatch'),
+];
+
 export const ENQUIRY_LINE_OUTCOMES = [
   opt('open', 'Open', { tone: 'blue' }),
   opt('partial', 'Partly won', { tone: 'amber' }),
@@ -171,12 +181,22 @@ export const TEMPERATURES = [
 ];
 
 export const QUOTE_STATUSES = [
-  opt('draft', 'Draft (not sent)', { tone: 'slate' }),
-  opt('issued', 'Issued — awaiting decision', { tone: 'blue' }),
-  opt('accepted', 'Accepted', { tone: 'green' }),
+  opt('draft', 'Pending — not sent yet', { tone: 'amber' }),
+  opt('issued', 'Sent — awaiting decision', { tone: 'blue' }),
+  opt('accepted', 'Approved by customer', { tone: 'green' }),
   opt('rejected', 'Rejected', { tone: 'red' }),
   opt('superseded', 'Superseded', { tone: 'slate' }),
 ];
+
+// The four states a quotation is tracked by. "Approved" means the customer approved it; internal discount
+// approval is a separate step inside "Pending".
+export const QUOTE_TRACKING = [
+  opt('pending', 'Pending', { tone: 'amber' }),
+  opt('sent', 'Sent', { tone: 'blue' }),
+  opt('approved', 'Approved', { tone: 'green' }),
+  opt('rejected', 'Rejected', { tone: 'red' }),
+];
+export const quoteTracking = (status) => ({ draft: 'pending', issued: 'sent', accepted: 'approved', rejected: 'rejected' }[status] || null);
 
 export const APPROVAL_STATUSES = [
   opt('not_required', 'Within policy', { tone: 'green' }),
@@ -337,6 +357,12 @@ export const CAMPAIGN_TYPES = [
   opt('webinar', 'Webinar'),
   opt('email_campaign', 'Email campaign'),
   opt('seminar', 'Technical seminar'),
+];
+
+export const VISIT_OUTCOMES = [
+  opt('follow_up', 'Follow-up needed', { tone: 'amber' }),
+  opt('enquiry', 'Enquiry raised', { tone: 'green' }),
+  opt('no_interest', 'No requirement', { tone: 'slate' }),
 ];
 
 export const CAMPAIGN_STATUSES = [
@@ -582,6 +608,10 @@ export const DEFAULT_SETTINGS = {
     staleWorkingDays: 2,
     readyGraceWorkingDays: 1,
     enquiryResponseWorkingDays: 1,
+    pipelineQuoteDraftWorkingDays: 2,
+    pipelineQuoteDecisionWorkingDays: 5,
+    pipelineConfirmationWorkingDays: 2,
+    pipelineAdvanceWorkingDays: 3,
     escalateAfterWorkingDays: 1,
     reactivationDailyCapPerOwner: 5,
     noteMaxLength: 1000,

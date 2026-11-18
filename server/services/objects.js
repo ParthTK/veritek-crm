@@ -1,9 +1,8 @@
 // Objects & QR codes: a general-purpose object register with permanent public ids, custom fields, versioned
 // documents, QR / Code 128 codes, public scan pages and privacy-preserving scan analytics.
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
-import { get, all, run, insert, update, tx, FILE_DIR } from '../db.js';
+import { get, all, run, insert, update, tx } from '../db.js';
+import { getFile, fileExists } from '../storage.js';
 import { FIELD_TYPES, OBJECT_VISIBILITY } from '../../shared/constants.js';
 import {
   badRequest, notFound, nowIso, today, str, intId, num, audit, parseJson, settings,
@@ -35,7 +34,8 @@ export function newPublicId() {
 
 export const publicUrlFor = (publicId, baseUrl) => `${String(baseUrl || '').replace(/\/+$/, '')}/o/${publicId}`;
 export const objectSettings = () => settings().objects;
-export const filePath = (attachment) => path.join(FILE_DIR, path.basename(attachment.storage_key));
+/** The stored bytes of an attachment, or null when the file is missing. */
+export const fileData = (attachment) => getFile(attachment.storage_key);
 
 // ------------------------------------------------------------------ custom fields
 const FIELD_TYPE_VALUES = FIELD_TYPES.map((f) => f.value);
@@ -355,7 +355,7 @@ export function scanStats(objectId) {
 export function objectHealth() {
   const rows = all(`SELECT f.id, f.title, f.object_id, a.storage_key, a.original_name, o.name AS object_name, o.public_id
     FROM object_files f JOIN attachments a ON a.id = f.attachment_id JOIN objects o ON o.id = f.object_id WHERE f.is_current = 1 AND o.deleted_at IS NULL`);
-  const missing = rows.filter((f) => !fs.existsSync(filePath(f)));
+  const missing = rows.filter((f) => !fileExists(f.storage_key));
   const noCode = all(`SELECT o.id, o.name, o.public_id FROM objects o WHERE o.deleted_at IS NULL AND o.status = 'active'
     AND NOT EXISTS (SELECT 1 FROM object_codes k WHERE k.object_id = o.id)`);
   return { missing_files: missing.map(({ storage_key: _k, ...f }) => f), without_codes: noCode, checked: rows.length };

@@ -1,0 +1,15 @@
+# Files not uploaded by `gcloud run deploy --source .` (the Dockerfile builds the rest).
+.gcloudignore
+.git
+.gitignore
+.vercel
+.vercelignore
+node_modules/
+client/dist/
+data/
+seed/
+tests/
+docs/
+api/
+*.log
+.env

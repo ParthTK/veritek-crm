@@ -55,9 +55,9 @@ export default function Products() {
       </div>
     ) },
     { key: 'category', label: 'Category', render: (p) => <span className="small">{p.category_name || <span className="muted">—</span>}</span> },
-    values && { key: 'std', label: 'Standard', align: 'num', render: (p) => <Money minor={p.standard_price_minor} currency={p.price_currency} /> },
-    values && { key: 'dealer', label: 'Dealer', align: 'num', render: (p) => (p.dealer_price_minor ? <Money minor={p.dealer_price_minor} currency={p.price_currency} /> : <span className="muted small">= standard</span>) },
-    values && { key: 'dist', label: 'Distributor', align: 'num', render: (p) => (p.distributor_price_minor ? <Money minor={p.distributor_price_minor} currency={p.price_currency} /> : <span className="muted small">= standard</span>) },
+    values && { key: 'std', label: 'Standard', align: 'num', render: (p) => <Money minor={p.standard_price_minor} currency={p.price_currency} empty="Not set" /> },
+    values && { key: 'dealer', label: 'Dealer', align: 'num', render: (p) => (p.dealer_price_minor ? <Money minor={p.dealer_price_minor} currency={p.price_currency} /> : <span className="muted small nowrap">{p.standard_price_minor ? '= standard' : '—'}</span>) },
+    values && { key: 'dist', label: 'Distributor', align: 'num', render: (p) => (p.distributor_price_minor ? <Money minor={p.distributor_price_minor} currency={p.price_currency} /> : <span className="muted small nowrap">{p.standard_price_minor ? '= standard' : '—'}</span>) },
     margin && { key: 'min', label: 'Min. selling', align: 'num', render: (p) => (p.min_price_minor ? <span className="warning-text"><Money minor={p.min_price_minor} currency={p.price_currency} /></span> : <span className="muted">—</span>) },
     margin && { key: 'margin', label: 'Margin at list', align: 'num', render: (p) => { const m = marginAtList(p); return m === null || m === undefined ? <span className="muted">—</span> : pct(m); } },
     { key: 'gst', label: 'GST', align: 'num', render: (p) => `${number(p.gst_rate, 2)}%` },
@@ -85,7 +85,7 @@ export default function Products() {
             <>
               <div className="row between"><span className="strong mono">{p.code}</span>{p.active ? <Badge size="sm" tone="green">Active</Badge> : <Badge size="sm">Inactive</Badge>}</div>
               <div>{p.name}</div>
-              <div className="row between small"><span className="muted">{p.category_name}</span>{values && <Money minor={p.standard_price_minor} currency={p.price_currency} />}</div>
+              <div className="row between small"><span className="muted">{p.category_name}</span>{values && <Money minor={p.standard_price_minor} currency={p.price_currency} empty="Price not set" />}</div>
             </>
           )} />
       </Card>
@@ -133,7 +133,7 @@ export function ProductDetailPage() {
         subtitle={p.model ? `Model ${p.model}` : undefined}
         actions={canEdit && <><Button onClick={toggleActive}>{p.active ? 'Deactivate' : 'Reactivate'}</Button><Button variant="primary" icon="edit" onClick={() => setEditing(true)}>Edit product</Button></>} />
       <div className="tiles">
-        {values && <div className="stat"><span className="k">Standard price</span><span className="v"><Money minor={p.standard_price_minor} currency={p.price_currency} /></span><span className="d">excl. GST {number(p.gst_rate, 2)}%</span></div>}
+        {values && <div className="stat"><span className="k">Standard price</span><span className="v"><Money minor={p.standard_price_minor} currency={p.price_currency} empty="Not set" /></span><span className="d">excl. GST {number(p.gst_rate, 2)}%</span></div>}
         <Stat k="Lead time" v={p.lead_time_days !== null && p.lead_time_days !== undefined ? `${p.lead_time_days} days` : '—'} d={labelOf(STOCK_TYPES, p.stock_type)} />
         <Stat k="Open enquiries" v={number(stats.open_enquiries)} d={`${number(stats.enquiries)} enquiries in total`} />
         <Stat k="Open complaints" v={number(stats.open_complaints)} d={`${number(stats.complaints)} logged in total`} />
@@ -149,9 +149,9 @@ export function ProductDetailPage() {
         <div className="grid grid-2">
           <Card title="Commercial">
             <Facts items={[
-              values && ['Standard price', <strong><Money minor={p.standard_price_minor} currency={p.price_currency} /></strong>],
-              values && ['Dealer price', p.dealer_price_minor ? <Money minor={p.dealer_price_minor} currency={p.price_currency} /> : 'Same as standard'],
-              values && ['Distributor price', p.distributor_price_minor ? <Money minor={p.distributor_price_minor} currency={p.price_currency} /> : 'Same as standard'],
+              values && ['Standard price', <strong><Money minor={p.standard_price_minor} currency={p.price_currency} empty="Not set" /></strong>],
+              values && ['Dealer price', p.dealer_price_minor ? <Money minor={p.dealer_price_minor} currency={p.price_currency} /> : p.standard_price_minor ? 'Same as standard' : 'Not set'],
+              values && ['Distributor price', p.distributor_price_minor ? <Money minor={p.distributor_price_minor} currency={p.price_currency} /> : p.standard_price_minor ? 'Same as standard' : 'Not set'],
               margin && ['Minimum selling price', p.min_price_minor ? <span className="warning-text"><Money minor={p.min_price_minor} currency={p.price_currency} /></span> : 'Not set'],
               margin && ['Cost price', p.cost_price_minor ? <Money minor={p.cost_price_minor} currency={p.price_currency} /> : 'Not set'],
               margin && ['Margin at standard price', m === null || m === undefined ? '—' : pct(m)],

@@ -8,7 +8,7 @@ import {
   notify, notifyRoles, settings, token, likeTerm, paginate, parseJson,
 } from '../util.js';
 import { isInstant, addDays } from '../../shared/dates.js';
-import {
+import { quoteTracking,
   OPEN_ENQUIRY_STAGES, CURRENCIES, PRICE_LISTS, QUOTE_STATUSES, ROLES, roleRank, can, labelOf, groupOf,
 } from '../../shared/constants.js';
 import { round3, toMinor, formatMoney } from '../../shared/rules.js';
@@ -283,6 +283,10 @@ export function createQuotation(input, user) {
   const lines = linkEnquiryLines(normaliseLines(c, source, { priceList, currency }), e?.id);
   if (input.validity_date) c.date('validity_date', input.validity_date);
   if (!e) checkOption(c, 'source_code', 'enquiry_source', input.source_code || 'existing_customer', { note: input.source_event, noteField: 'source_event' });
+  if (!e && input.source_code === 'exhibition') {
+    const campaign = intId(input.campaign_id) ? get('SELECT type FROM campaigns WHERE id = ?', intId(input.campaign_id)) : null;
+    if (campaign?.type !== 'exhibition') c.fail('campaign_id', 'Choose the exhibition this enquiry came from');
+  }
   c.throwIfAny();
   const header = headerFrom(input);
   const calc = computeQuote(lines, input, currency);
@@ -290,7 +294,7 @@ export function createQuotation(input, user) {
     if (!e) {
       const created = createEnquiry({
         customer_id: customerId, contact_id: intId(input.contact_id), owner_id: intId(input.owner_id) || customer.owner_id || user.id,
-        source_code: input.source_code || 'existing_customer', source_event: input.source_event, title: str(input.subject, 160),
+        source_code: input.source_code || 'existing_customer', source_event: input.source_event, campaign_id: input.campaign_id || undefined, title: str(input.subject, 160),
         lines: lines.map((l) => ({ product_id: l.product_id, requirement: l.product_id ? undefined : l.description, spec: l.spec, qty: l.qty, unit: l.unit })),
         next: { purpose: 'Send quotation', owner_id: intId(input.owner_id) || customer.owner_id || user.id, due_date: today() },
         requirement_note: 'Created from the quotation builder',
@@ -723,7 +727,9 @@ export function listQuotations(query, user) {
     params.push(...Array(4).fill(likeTerm(query.q)));
   }
   const st = query.status;
-  if (st === 'awaiting') where.push("r.status = 'issued'");
+  if (st === 'awaiting' || st === 'sent') where.push("r.status = 'issued'");
+  else if (st === 'pending') where.push("r.status = 'draft'");
+  else if (st === 'approved') where.push("r.status = 'accepted'");
   else if (st === 'expiring') where.push(`r.status = 'issued' AND r.validity_date BETWEEN '${day}' AND '${addDays(day, 7)}'`);
   else if (st === 'expired') where.push(`r.status = 'issued' AND r.validity_date < '${day}'`);
   else if (st === 'approval') where.push("r.status = 'draft' AND r.approval_status IN ('required','pending','rejected')");
@@ -755,13 +761,15 @@ export function listQuotations(query, user) {
       r.id AS revision_id, r.revision_no, r.status, r.currency, r.total_minor, r.grand_total_minor, r.discount_pct, r.margin_pct, r.approval_status, r.approval_role,
       r.validity_date, r.sent_at, r.viewed_at, r.customer_response, (SELECT COUNT(*) FROM orders o JOIN quote_revisions rr ON rr.id = o.quote_revision_id WHERE rr.quotation_id = q.id) AS orders
     ${from} WHERE ${where.join(' AND ')} ${order} LIMIT ? OFFSET ?`, ...params, limit, offset)
-    .map((x) => ({ ...x, expired: x.status === 'issued' && x.validity_date && x.validity_date < day }));
+    .map((x) => ({ ...x, tracking: quoteTracking(x.status), expired: x.status === 'issued' && x.validity_date && x.validity_date < day }));
   const count = get(`SELECT COUNT(*) AS n ${from} WHERE ${where.join(' AND ')}`, ...params).n;
   const summary = all(`SELECT r.status, r.currency, COUNT(*) AS n, SUM(r.total_minor) AS value_minor ${from} WHERE ${scope || '1 = 1'} GROUP BY r.status, r.currency`);
   const attention = get(`SELECT SUM(CASE WHEN r.status = 'draft' AND r.approval_status IN ('required','pending','rejected') THEN 1 ELSE 0 END) AS approval,
       SUM(CASE WHEN r.status = 'issued' AND r.validity_date < ? THEN 1 ELSE 0 END) AS expired,
       SUM(CASE WHEN r.status = 'issued' AND r.validity_date BETWEEN ? AND ? THEN 1 ELSE 0 END) AS expiring ${from} WHERE ${scope || '1 = 1'}`, day, day, addDays(day, 7));
-  return { rows, count, page, pageSize, summary, attention: { approval: attention.approval || 0, expired: attention.expired || 0, expiring: attention.expiring || 0 } };
+  const tracking = { pending: 0, sent: 0, approved: 0, rejected: 0 };
+  for (const s of summary) if (quoteTracking(s.status)) tracking[quoteTracking(s.status)] += s.n;
+  return { rows, count, page, pageSize, summary, tracking, attention: { approval: attention.approval || 0, expired: attention.expired || 0, expiring: attention.expiring || 0 } };
 }
 
 /** Price, tax, margin and approval preview for the builder without saving. */

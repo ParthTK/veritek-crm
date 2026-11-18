@@ -3,9 +3,9 @@
 // a reassuring zero.
 import { all, get } from '../db.js';
 import { now, today, tz, calendar, settings, intId, optionLabel, placeholders } from '../util.js';
-import { addWorkingDays } from '../../shared/dates.js';
-import { OPEN_ENQUIRY_STAGES } from '../../shared/constants.js';
-import { customerScope, enquiryScope, taskScope } from '../access.js';
+import { addDays, addWorkingDays, localDate, zonedToUtc } from '../../shared/dates.js';
+import { OPEN_ENQUIRY_STAGES, SELECTABLE_PHASES, PHASES, labelOf } from '../../shared/constants.js';
+import { customerScope, enquiryScope, quotationScope, taskScope } from '../access.js';
 import { loadOrdersWithLines, orderListRow } from './orders.js';
 import { TASK_COLUMNS, decorateTask } from './tasks.js';
 import { pastCustomers } from './reactivation.js';
@@ -120,6 +120,35 @@ export function dashboard(q, user) {
   const enquiriesNoNext = get(`SELECT COUNT(*) AS n ${eBase} AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.enquiry_id = e.id AND t.status = 'open') AND e.no_followup_reason IS NULL`, ...eParams).n;
   const enquiriesNoResponse = get(`SELECT COUNT(*) AS n ${eBase} AND e.first_response_at IS NULL AND e.received_at IS NOT NULL`, ...eParams).n;
 
+  // The daily picture: enquiries received per day (and whether each has been replied to), quotations waiting,
+  // and how the active order lines are spread across production.
+  const anyStage = eWhere.slice(1);
+  const firstDay = addDays(day, -13);
+  const yesterday = addDays(day, -1);
+  const received = all(`SELECT e.received_at, e.first_response_at FROM enquiries e JOIN customers c ON c.id = e.customer_id WHERE e.received_at >= ? ${anyStage.length ? `AND ${anyStage.join(' AND ')}` : ''}`, zonedToUtc(firstDay, '00:00', tz()), ...eParams);
+  const perDay = new Map(Array.from({ length: 14 }, (_, i) => [addDays(firstDay, i), { day: addDays(firstDay, i), replied: 0, not_replied: 0 }]));
+  for (const r of received) {
+    const bucket = perDay.get(localDate(new Date(r.received_at), tz()));
+    if (bucket) bucket[r.first_response_at ? 'replied' : 'not_replied'] += 1;
+  }
+  const dayTotal = (d) => (perDay.get(d)?.replied || 0) + (perDay.get(d)?.not_replied || 0);
+  const qScope = quotationScope(user, 'q');
+  const quoteFilters = [qScope, intId(q.owner) ? `q.owner_id = ${intId(q.owner)}` : null, intId(q.customer_id) ? `q.customer_id = ${intId(q.customer_id)}` : null].filter(Boolean);
+  const quotes = get(`SELECT COALESCE(SUM(CASE WHEN r.status = 'draft' THEN 1 ELSE 0 END), 0) AS not_sent,
+      COALESCE(SUM(CASE WHEN r.status = 'draft' AND r.approval_status IN ('required','pending') THEN 1 ELSE 0 END), 0) AS awaiting_approval,
+      COALESCE(SUM(CASE WHEN r.status = 'issued' THEN 1 ELSE 0 END), 0) AS sent,
+      COALESCE(SUM(CASE WHEN r.status = 'issued' AND r.validity_date < ? THEN 1 ELSE 0 END), 0) AS expired
+    FROM quotations q JOIN quote_revisions r ON r.quotation_id = q.id AND r.revision_no = (SELECT MAX(r2.revision_no) FROM quote_revisions r2 WHERE r2.quotation_id = q.id)
+    JOIN customers c ON c.id = q.customer_id ${quoteFilters.length ? `WHERE ${quoteFilters.join(' AND ')}` : ''}`, day);
+  const production = SELECTABLE_PHASES.map((phase) => {
+    const here = lineRows.filter((l) => l.phase === phase);
+    return { phase, label: labelOf(PHASES, phase), lines: here.length, delayed: here.filter((l) => ['overdue', 'at_risk'].includes(l.state)).length };
+  });
+  const flow = {
+    enquiries_today: dayTotal(day), enquiries_yesterday: dayTotal(yesterday), daily_enquiries: [...perDay.values()],
+    replied: openEnquiries - enquiriesNoResponse, not_replied: enquiriesNoResponse, quotations: quotes, production,
+  };
+
   // Reactivation: distinct customers with an open reactivation task due today or overdue.
   const reconnectQuery = taskRows(user, q, "t.reactivation_case_id IS NOT NULL AND (t.overdue_at <= ? OR t.due_date = ?)", [nowStr, day], 50);
   const reconnectCustomers = new Set(reconnectQuery.rows.map((t) => t.customer_id));
@@ -166,6 +195,7 @@ export function dashboard(q, user) {
   return {
     refreshed_at: nowStr,
     today: day,
+    flow,
     timezone: tz(),
     last_scheduler_run: lastRun ? { at: lastRun.finished_at, status: lastRun.status } : null,
     empty: { customers: totalCustomers === 0, orders: totalOrders === 0 },

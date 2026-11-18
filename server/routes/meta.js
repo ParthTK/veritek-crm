@@ -64,7 +64,7 @@ r.post('/pins', allow('pins.manage'), h((req) => {
   if (type === 'customer') assertCustomer(req.user, id);
   else assertOrder(req.user, id);
   if (req.body?.pinned === false) run('DELETE FROM pins WHERE user_id = ? AND entity_type = ? AND entity_id = ?', req.user.id, type, id);
-  else run('INSERT OR IGNORE INTO pins (user_id, entity_type, entity_id, created_at) VALUES (?, ?, ?, ?)', req.user.id, type, id, nowIso());
+  else run('INSERT INTO pins (user_id, entity_type, entity_id, created_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING', req.user.id, type, id, nowIso());
   return { ok: true };
 }));
 

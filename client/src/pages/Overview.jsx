@@ -6,6 +6,7 @@ import { date, dateTime, relDay, timeAgo, qty } from '../lib/format.js';
 import {
   Badge, Button, Card, EmptyState, ErrorState, Notice, PageHeader, Spinner, Tabs, Tile, Drawer, useToast,
 } from '../components/ui.jsx';
+import { ColumnChart, BarChartH } from '../components/charts.jsx';
 import { FilterBar, DueBadge, LineStateBadge, CommBadge, useMeta } from '../components/domain.jsx';
 import { FollowupForm } from '../components/forms.jsx';
 import { api } from '../api.js';
@@ -58,12 +59,15 @@ export default function Overview() {
     }
   };
 
+  const flow = data.flow;
+  const inProduction = flow.production.filter((p) => p.phase !== 'ready').reduce((n, p) => n + p.lines, 0);
+  const readyLines = flow.production.find((p) => p.phase === 'ready')?.lines || 0;
   if (data.empty.customers) {
     return (
       <div className="stack">
         <PageHeader title="Welcome" subtitle="There are no records yet." />
         <EmptyState icon="upload" title="Start by importing or adding your records" message="Import customers, open enquiries and active order lines from your existing sheets, or add them one by one. Until then, the overview has nothing to measure — it will not show reassuring zeros."
-          action={<div className="row">{can('imports.run') && <Button variant="primary" to="/settings?tab=imports">Import data</Button>}{can('enquiries.edit') && <Button to="/enquiries">Add an enquiry</Button>}</div>} />
+          action={<div className="row">{can('imports.run') && <Button variant="primary" to="/settings?tab=imports">Import data</Button>}{can('customers.edit') && <Button to="/customers">Add a customer</Button>}</div>} />
       </div>
     );
   }
@@ -81,11 +85,26 @@ export default function Overview() {
       {showFilters && <FilterBar value={filters} onChange={setFilter} />}
 
       <div className="tiles">
-        {can('past.view') && <Tile icon="users" label="Past customers to reconnect" value={t.reconnect.count} to={withFilters(t.reconnect.link, filters)} foot="Reconnect task due today or overdue" />}
-        {can('enquiries.view') && <Tile icon="inbox" label="Open enquiries" value={t.open_enquiries.count} to={withFilters(t.open_enquiries.link, filters)} foot={t.open_enquiries.no_response ? `${t.open_enquiries.no_response} without a first response` : 'Includes on hold with a review date'} />}
+        {can('enquiries.view') && <Tile icon="inbox" label="Enquiries today" value={flow.enquiries_today} to="/enquiries?stage=all&sort=received&dir=desc" foot={`${flow.enquiries_yesterday} yesterday`} />}
+        {can('enquiries.view') && <Tile icon="phone" alert={flow.not_replied > 0} label="Enquiries not replied" value={flow.not_replied} to={withFilters('/enquiries?stage=open&reply=unreplied', filters)} foot={`${flow.replied} of ${t.open_enquiries.count} open enquiries replied`} />}
+        {can('quotes.view') && <Tile icon="quotation" label="Pending quotations" value={flow.quotations.not_sent + flow.quotations.sent} to="/quotations?status=pending" foot={`${flow.quotations.not_sent} not sent · ${flow.quotations.sent} awaiting customer`} />}
         <Tile icon="box" label="Active orders" value={t.active_orders.count} to={withFilters(t.active_orders.link, filters)} foot="Unfulfilled, non-cancelled balance" />
+        <Tile icon="factory" label="In production" value={inProduction} to="/production" foot={`order lines · ${readyLines} ready for dispatch`} />
         <Tile icon="alert" alert={t.delayed.count > 0} label="Delayed orders" value={t.delayed.count} to={withFilters(t.delayed.link, filters)} title={t.delayed.explanation}
           foot={<span><Badge size="sm" tone="red">{t.delayed.overdue} overdue</Badge> <Badge size="sm" tone="amber">{t.delayed.at_risk} at risk</Badge></span>} />
+        {can('enquiries.view') && <Tile icon="pipeline" label="Open enquiries" value={t.open_enquiries.count} to={withFilters(t.open_enquiries.link, filters)} foot={t.open_enquiries.no_next ? `${t.open_enquiries.no_next} without a next action` : 'All have a next action'} />}
+        {can('past.view') && <Tile icon="users" label="Past customers to reconnect" value={t.reconnect.count} to={withFilters(t.reconnect.link, filters)} foot="Reconnect task due today or overdue" />}
+      </div>
+      <div className="grid grid-2">
+        {can('enquiries.view') && (
+          <Card title="Daily enquiries" sub="last 14 days, by reply status">
+            <ColumnChart data={flow.daily_enquiries} x="day" xFormat={(d) => date(d)} stacked height={200} format="number" empty="No enquiries in the last 14 days"
+              series={[{ key: 'replied', label: 'Replied' }, { key: 'not_replied', label: 'Not replied' }]} />
+          </Card>
+        )}
+        <Card title="Production status" sub="active order lines by stage" actions={<Button size="sm" variant="ghost" to="/production">Open board</Button>}>
+          <BarChartH data={flow.production} label="label" format="number" series={[{ key: 'lines', label: 'Lines' }, { key: 'delayed', label: 'Delayed' }]} />
+        </Card>
       </div>
       <div className="small muted" style={{ marginTop: -8 }}><Icon name="info" size={13} /> {t.delayed.explanation} Cards are not added together.</div>
 

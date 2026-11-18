@@ -8,7 +8,7 @@ import { date, qty, timeAgo } from '../lib/format.js';
 import {
   Badge, Button, Card, Chips, DataTable, ErrorState, PageHeader, SearchBox, Segmented, Modal, Field, Select, Input, Notice, SaveStatus, useToast,
 } from '../components/ui.jsx';
-import { LineStateBadge, PhaseLabel, OutcomeBadges, CommBadge, FilterBar, OptionSelect, UserSelect, Money } from '../components/domain.jsx';
+import { LineStateBadge, PhaseLabel, OutcomeBadges, CommBadge, FilterBar, OptionSelect, UserSelect, Money, PaymentBadge } from '../components/domain.jsx';
 import { useQuickEntry } from '../components/QuickEntry.jsx';
 
 const CHIPS = [
@@ -49,6 +49,8 @@ export default function Orders() {
             { key: 'customer', label: 'Customer', render: (r) => r.customer_name },
             { key: 'lines', label: 'Lines', render: (r) => <>{r.lines.slice(0, 2).map((l) => <div key={l.id} className="small">{qty(l.quantities.remaining, l.unit)} of {qty(l.quantities.confirmed)} × {l.product}</div>)}{r.lines.length > 2 && <div className="sub">+{r.lines.length - 2} more</div>}</> },
             { key: 'phase', label: 'Phase', render: (r) => (r.status === 'draft' ? <Badge>Draft</Badge> : r.active ? <PhaseLabel phase={r.phase} /> : <OutcomeBadges outcome={r.outcome} size="sm" />) },
+            { key: 'progress', label: 'Progress', render: (r) => (r.status === 'confirmed' ? <div style={{ minWidth: 92 }}><div className="progress" title={`${r.progress.ready_pct}% built or ready`}><span style={{ width: `${r.progress.ready_pct}%` }} /></div><div className="tiny muted nowrap">{r.progress.ready_pct}% ready · {r.progress.dispatched_pct}% sent</div></div> : null) },
+            { key: 'payment', label: 'Payment', render: (r) => <PaymentBadge payment={r.payment} /> },
             { key: 'state', label: 'Status', render: (r) => (r.status !== 'confirmed' ? null : !r.active ? <OutcomeBadges outcome={r.outcome} size="sm" /> : <span className="stack-xs">
               {r.overdue ? <LineStateBadge state="overdue" daysLate={r.max_days_late} pastAgreed={r.past_agreed} /> : r.at_risk ? <LineStateBadge state="at_risk" /> : r.issue ? <LineStateBadge state="issue" /> : r.uncommitted ? <LineStateBadge state="uncommitted" /> : <LineStateBadge state="on_track" />}
               {r.ready_waiting > 0 && <Badge size="sm" tone="teal">Ready to dispatch</Badge>}

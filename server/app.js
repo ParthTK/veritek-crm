@@ -3,10 +3,13 @@
 import express from 'express';
 import path from 'node:path';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { migrate, val, insert, ROOT } from './db.js';
-import { HttpError, context, token, nowIso } from './util.js';
+import { HttpError, context, token, nowIso, settings } from './util.js';
 import { requireAuth } from './auth.js';
 import { ensureDropdownDefaults } from './services/admin.js';
+import { runEvaluator } from './services/alerts.js';
+import { maybeScheduledBackup } from './services/backup.js';
 
 import authRoutes from './routes/auth.js';
 import metaRoutes from './routes/meta.js';
@@ -24,16 +27,19 @@ import quotationRoutes from './routes/quotations.js';
 import campaignRoutes from './routes/campaigns.js';
 import objectRoutes from './routes/objects.js';
 import publicRoutes from './routes/public.js';
+import pipelineRoutes from './routes/pipeline.js';
 
 migrate();
 ensureDropdownDefaults();
-if (!val('SELECT COUNT(*) FROM users') && process.env.CRM_NO_DEMO !== '1') {
-  console.log('Empty database: loading demo data…');
-  const { seed } = await import('./seed.js');
-  seed();
-} else if (!val('SELECT COUNT(*) FROM users')) {
-  const { bootstrapAdmin } = await import('./seed.js');
-  bootstrapAdmin();
+if (!val('SELECT COUNT(*) FROM users')) {
+  const { seed, seedBaseline } = await import('./seed.js');
+  if (process.env.CRM_NO_DEMO === '1') {
+    console.log('Empty database: setting up a clean installation…');
+    seedBaseline();
+  } else {
+    console.log('Empty database: loading demo data…');
+    seed();
+  }
 }
 
 const app = express();
@@ -59,6 +65,21 @@ const json = express.json({ limit: '2mb' });
 const jsonUnlessUpload = (req, res, next) => (/^\/api\/(attachments|imports\/upload)/.test(req.originalUrl) && req.method === 'POST' ? next() : json(req, res, next));
 app.use(jsonUnlessUpload);
 
+// Cloud Run has no in-process timers, so Cloud Scheduler calls this every 15 minutes with a shared secret
+// (CRM_CRON_SECRET). Without the right secret it does not exist.
+app.post('/api/internal/scheduled', (req, res, next) => {
+  const secret = process.env.CRM_CRON_SECRET || '';
+  const given = String(req.get('x-cron-secret') || '');
+  if (!secret || given.length !== secret.length || !crypto.timingSafeEqual(Buffer.from(given), Buffer.from(secret))) return next(new HttpError(404, 'API route not found'));
+  try {
+    const evaluation = settings().scheduler.enabled ? runEvaluator({ trigger: 'scheduler' }) : null;
+    const backup = maybeScheduledBackup();
+    res.json({ ok: true, reminders: evaluation ? evaluation.status : 'scheduler switched off', backup: backup ? backup.status : 'not due' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.use('/api', authRoutes);
 app.use('/api', publicFiles);
 app.use('/api/public', publicRoutes);
@@ -73,7 +94,7 @@ api.use((req, _res, next) => {
   }
   next();
 });
-for (const r of [metaRoutes, customerRoutes, enquiryRoutes, taskRoutes, orderRoutes, workRoutes, fileRoutes, quotationRoutes, financeRoutes, complaintRoutes, productRoutes, campaignRoutes, objectRoutes, adminRoutes]) api.use(r);
+for (const r of [metaRoutes, pipelineRoutes, customerRoutes, enquiryRoutes, taskRoutes, orderRoutes, workRoutes, fileRoutes, quotationRoutes, financeRoutes, complaintRoutes, productRoutes, campaignRoutes, objectRoutes, adminRoutes]) api.use(r);
 app.use('/api', api);
 app.use('/api', (_req, _res, next) => next(new HttpError(404, 'API route not found')));
 

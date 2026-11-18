@@ -4,7 +4,7 @@
 // the situations in the specification's reference screens (all records are fictional).
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { db, all, get, run, insert, update, tx, migrate } from './db.js';
+import { all, get, run, insert, update, tx, migrate, dropAllTables, closeDb, DB_PATH } from './db.js';
 import {
   setClock, now, withContext, setSetting, resetSettingsCache, resetDropdownCache, settings, nextCode, setCounter, today, installSecret,
 } from './util.js';
@@ -24,7 +24,7 @@ import { createInvoice, recordReceipt, setPromise, placeHold, setFinanceAsOf, re
 import { saveCampaign } from './services/campaigns.js';
 import { saveTargets } from './services/team.js';
 import { addDocument } from './services/products.js';
-import { seedObjects } from './seed-objects.js';
+import { seedObjects, seedObjectCategories } from './seed-objects.js';
 import { createComplaint, updateComplaint } from './services/complaints.js';
 import { storeAttachment } from './services/attachments.js';
 import { storeUpload, commitImport } from './services/imports.js';
@@ -174,6 +174,7 @@ const STATE_CODE = { Maharashtra: '27', Gujarat: '24', 'Madhya Pradesh': '23', '
 const CAMPAIGNS = [
   { key: 'elecrama', name: 'ELECRAMA 2025 — Greater Noida', type: 'exhibition', location: 'India Expo Centre, Greater Noida', offset: 64, days: 5, cost: 650000, target: 120, stall: 'Hall 4 · H4-B21', segment: 'domestic' },
   { key: 'mee', name: 'Middle East Energy 2026 — Dubai', type: 'exhibition', location: 'Dubai World Trade Centre', offset: 300, days: 3, cost: 980000, target: 60, stall: 'S2-E14', segment: 'export' },
+  { key: 'autoexpo', name: 'Automation Expo — Mumbai', type: 'exhibition', location: 'Bombay Exhibition Centre, Goregaon', offset: 566, days: 4, cost: 420000, target: 80, stall: 'Hall 2 · B-44', segment: 'domestic' },
   { key: 'meet', name: 'Panel builders meet — Pune', type: 'dealer_meet', location: 'Hotel Hyatt, Pune', offset: 452, days: 1, cost: 120000, target: 40, segment: 'domestic' },
 ];
 
@@ -250,17 +251,53 @@ function demoPdf(text) {
 
 // ------------------------------------------------------------------ helpers
 function dropAll() {
-  db.exec('PRAGMA foreign_keys = OFF');
-  for (const t of all("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")) db.exec(`DROP TABLE IF EXISTS "${t.name}"`);
-  db.exec('PRAGMA foreign_keys = ON');
+  dropAllTables();
 }
 
+/** Creates the first super administrator, who must change the password at first sign-in. Returns the id. */
 export function bootstrapAdmin() {
   const email = process.env.CRM_ADMIN_EMAIL || 'admin@localhost';
   const password = process.env.CRM_ADMIN_PASSWORD || `Vt-${crypto.randomBytes(6).toString('base64url')}9`;
   const stamp = new Date().toISOString();
-  insert('users', { name: 'Administrator', email, role: 'super_admin', department: 'management', login_enabled: 1, password_hash: hashPassword(password), must_change_password: 1, active: 1, created_at: stamp, updated_at: stamp });
+  const id = insert('users', { name: 'Administrator', email, role: 'super_admin', department: 'management', login_enabled: 1, password_hash: hashPassword(password), must_change_password: 1, active: 1, created_at: stamp, updated_at: stamp });
   console.log(`Created the first administrator: ${email}${process.env.CRM_ADMIN_PASSWORD ? '' : ` / temporary password ${password}`} (must be changed at first sign-in)`);
+  return id;
+}
+
+/**
+ * A clean installation for real use: no demo companies, people, enquiries, quotations, orders, campaigns,
+ * objects or documents. It keeps the reference set-up — sales regions, product categories and the product
+ * model list with specifications, the object-register category templates, default settings and dropdowns —
+ * and creates one administrator. Prices, dealer/distributor prices, minimum price, cost, configurator price
+ * changes and stock quantities are left blank for the company to fill in. Factories are added under Settings.
+ */
+export function seedBaseline({ reset = false } = {}) {
+  if (reset) dropAll();
+  migrate();
+  resetSettingsCache();
+  ensureDropdownDefaults();
+  const stamp = new Date().toISOString();
+  tx(() => {
+    REGIONS.forEach(([name, states], i) => insert('regions', { name, states, active: 1, sort_order: i }));
+    const adminId = bootstrapAdmin();
+    setSetting('escalation', { defaultManagerId: adminId });
+    const cat = {};
+    FAMILIES.forEach((name, i) => { cat[name] = insert('product_categories', { name, description: null, active: 1, sort_order: i, created_at: stamp }); });
+    for (const [code, name, family, , d] of PRODUCTS) {
+      const pid = insert('products', {
+        code, name, family, category_id: cat[family], model: d.model, hsn: d.hsn, default_unit: 'pcs', integer_qty: 1, price_currency: 'INR',
+        gst_rate: 18, warranty_months: d.warranty, lead_time_days: d.lead, stock_type: d.stock, description: `${name}. ${d.model}.`,
+        specs: JSON.stringify({ Model: d.model, 'HSN code': d.hsn, Warranty: `${d.warranty} months` }), active: 1, created_at: stamp, updated_at: stamp,
+      });
+      (d.options || []).forEach(([group, opt, , , leadDelta], i) => insert('product_options', {
+        product_id: pid, group_name: group, name: opt, price_delta_minor: 0, cost_delta_minor: 0, lead_time_delta: leadDelta, active: 1, sort_order: i,
+      }));
+    }
+    seedObjectCategories(adminId);
+  });
+  resetSettingsCache();
+  installSecret();
+  console.log(`Clean installation ready: ${PRODUCTS.length} products (prices blank), ${REGIONS.length} regions, no demo records.`);
 }
 
 export function seed({ reset = false } = {}) {
@@ -362,9 +399,11 @@ export function seed({ reset = false } = {}) {
   const price = (code) => PRODUCTS.find((p) => p[0] === code)?.[3] ?? 1000;
   const failures = [];
   let poSeq = 0;
+  // Each attempt runs in its own savepoint: in PostgreSQL a failed statement would otherwise spoil the
+  // surrounding transaction for the steps after it.
   const safe = (label, fn) => {
     try {
-      return fn();
+      return tx(fn);
     } catch (err) {
       failures.push(`${label}: ${err.message}${err.details?.fields ? ` ${JSON.stringify(err.details.fields)}` : ''}`);
       return null;
@@ -826,6 +865,22 @@ export function seed({ reset = false } = {}) {
   }), '11:20');
   on(D(-6), () => scripted.metro && as('coord', (u) => safe('metro p', () => quickUpdate(get('SELECT id FROM order_lines WHERE order_id = ?', scripted.metro).id, { phase: 'production', work_status: 'in_progress', reported_by_id: U.ramesh }, u))), '10:00');
 
+  // Orders held up before production: an advance overdue for a week, one just requested, and a draft nobody confirmed.
+  on(D(-7), () => as('coord', (u) => safe('advance order', () => createOrder({
+    customer_id: C['Western Panel Builders'], owner_id: U[ownerKey(C['Western Panel Builders'])], source_code: 'po_received', po_reference: 'WPB/PO/2231', received_date: curDate(), currency: 'INR',
+    payment_terms: '40% advance, balance before dispatch', advance_pct: 40, advance_required: '58000.00',
+    lines: [{ product_id: P['VIPS 98EFR'].id, confirmed_qty: 20, unit: 'pcs', unit_price: '7250.00', commitment_state: 'committed', original_commitment_date: D(18) }], confirm: true, confirmation_note: 'PO received; production starts on receipt of advance',
+  }, u))), '11:40');
+  on(D(-1), () => as('coord', (u) => safe('advance order 2', () => createOrder({
+    customer_id: C['Sahyadri Switchgear'], owner_id: U[ownerKey(C['Sahyadri Switchgear'])], source_code: 'po_received', po_reference: 'SSG-8841', received_date: curDate(), currency: 'INR',
+    payment_terms: '30% advance, balance against proforma', advance_pct: 30, advance_required: '18900.00',
+    lines: [{ product_id: P['CT 400/5A'].id, confirmed_qty: 80, unit: 'pcs', unit_price: '787.50', commitment_state: 'committed', original_commitment_date: D(14) }], confirm: true,
+  }, u))), '15:10');
+  on(D(-5), () => as('coord', (u) => safe('draft order', () => createOrder({
+    customer_id: C['Apex Panels'], owner_id: U[ownerKey(C['Apex Panels'])], source_code: 'po_received', po_reference: 'APX-4502', received_date: curDate(), currency: 'INR',
+    lines: [{ product_id: P['VIPS 70L'].id, confirmed_qty: 60, unit: 'pcs', unit_price: '1425.00' }], notes: 'Waiting for the signed PO copy before confirming',
+  }, u))), '16:05');
+
   // ---------------------------------------------------------------- run the simulation
   let events = 0;
   while (q.size) {
@@ -907,7 +962,7 @@ export function seed({ reset = false } = {}) {
 
   // P1: invoices for recent dispatches, receipts, a broken promise and a payment hold; complaints.
   tx(() => {
-    const recent = all(`SELECT d.id, d.dispatch_date, d.customer_id, dl.order_id, SUM(dl.qty * l.unit_price_minor) AS value, o.currency
+    const recent = all(`SELECT d.id, d.dispatch_date, d.customer_id, MIN(dl.order_id) AS order_id, SUM(dl.qty * l.unit_price_minor) AS value, MIN(o.currency) AS currency
       FROM dispatches d JOIN dispatch_lines dl ON dl.dispatch_id = d.id JOIN order_lines l ON l.id = dl.line_id JOIN orders o ON o.id = dl.order_id
       WHERE d.status = 'posted' AND d.dispatch_date >= ? AND l.unit_price_minor IS NOT NULL GROUP BY d.id ORDER BY d.dispatch_date`, D(-150));
     let n = 0;
@@ -935,7 +990,7 @@ export function seed({ reset = false } = {}) {
       } else if (due < END && chance(0.35)) as('kavya', (u) => safe('promise', () => setPromise(inv.id, { promise_date: addDays(END, -int(1, 6)), note: 'Customer promised transfer this week' }, u)));
     }
     // Advances received against recent export orders (30% terms); one still awaited.
-    for (const o of all(`SELECT o.id, o.advance_required_minor FROM orders o WHERE o.status = 'confirmed' AND o.closed_at IS NULL AND o.advance_required_minor > 0 ORDER BY o.id DESC LIMIT 6`).slice(1)) {
+    for (const o of all(`SELECT o.id, o.advance_required_minor FROM orders o WHERE o.status = 'confirmed' AND o.closed_at IS NULL AND o.advance_required_minor > 0 AND o.po_reference NOT IN ('WPB/PO/2231', 'SSG-8841') ORDER BY o.id DESC LIMIT 6`).slice(1)) {
       as('neha', (u) => safe('advance', () => recordAdvance(o.id, { amount: money2(o.advance_required_minor), effective_date: D(-int(3, 20)), mode: 'tt', reference: `SWIFT${int(100000, 999999)}` }, u)));
     }
     setFinanceAsOf({ as_of: D(-1), reconciliation: 'not_reconciled', source: 'Tally export (daily)' }, { id: U.neha });
@@ -982,6 +1037,32 @@ export function seed({ reset = false } = {}) {
         AND customer_id IN (SELECT id FROM customers WHERE segment = ?)`, cp.id, cp.name, source, zonedToUtc(cp.start, '00:00', TZ), zonedToUtc(toDate, '00:00', TZ), cp.segment);
       run(`UPDATE customers SET campaign_id = ?, acquisition_source = ? WHERE campaign_id IS NULL AND id IN (SELECT e.customer_id FROM enquiries e WHERE e.campaign_id = ?
         AND e.received_at = (SELECT MIN(e2.received_at) FROM enquiries e2 WHERE e2.customer_id = e.customer_id))`, cp.id, source, cp.id);
+    }
+    // An exhibition enquiry always names its exhibition; any that fell outside a show's window were field leads.
+    run("UPDATE enquiries SET source_code = 'field_visit', source_event = NULL WHERE source_code = 'exhibition' AND campaign_id IS NULL");
+    // Who we met at each exhibition: the customer behind every exhibition enquiry, plus visitors with no enquiry yet.
+    const ASKED = ['Asked for the datasheet and a budget price', 'Wants a demo at their plant next month', 'Comparing with their current supplier', 'Needs Modbus output for a new MCC panel', 'Checked delivery time for a project lot'];
+    const NO_ENQUIRY = [
+      ['Multifunction meters for panel retrofits', 'Took the catalogue; call after their budget review', 'follow_up'], ['Current transformers for an upcoming substation job', 'Project not yet awarded — check back next quarter', 'follow_up'],
+      ['Energy meters for tenant billing', 'Asked for a reference site in their city', 'follow_up'], ['General product range', 'Visited out of interest, no current requirement', 'no_interest'], ['Timers and SMPS for control panels', 'Buys through a dealer; shared dealer contact', 'no_interest'],
+    ];
+    const stamp = new Date(clockMs).toISOString();
+    for (const cp of Object.values(CMP)) {
+      if (!cp.id || cp.type !== 'exhibition' || cp.start > END) continue;
+      const showDay = () => addDays(cp.start, int(0, cp.days - 1));
+      for (const e of all(`SELECT e.id, e.customer_id, e.contact_id, e.owner_id, (SELECT COALESCE(p.code, el.requirement) FROM enquiry_lines el LEFT JOIN products p ON p.id = el.product_id WHERE el.enquiry_id = e.id ORDER BY el.sort LIMIT 1) AS product
+        FROM enquiries e WHERE e.campaign_id = ? ORDER BY e.received_at`, cp.id)) {
+        const details = { interest: e.product, notes: pick(ASKED), met_by: e.owner_id, visited_on: showDay() };
+        const visit = get('SELECT id, enquiry_id FROM exhibition_visits WHERE campaign_id = ? AND customer_id = ?', cp.id, e.customer_id);
+        if (visit) update('exhibition_visits', visit.id, { ...details, enquiry_id: visit.enquiry_id || e.id, outcome: 'enquiry' });
+        else insert('exhibition_visits', { ...details, campaign_id: cp.id, customer_id: e.customer_id, contact_id: e.contact_id, enquiry_id: e.id, outcome: 'enquiry', created_by: e.owner_id, created_at: stamp, updated_at: stamp });
+      }
+      const others = all('SELECT c.id, c.owner_id FROM customers c WHERE c.segment = ? AND c.merged_into_id IS NULL AND c.id NOT IN (SELECT customer_id FROM exhibition_visits WHERE campaign_id = ?) ORDER BY c.id', cp.segment, cp.id);
+      for (const [interest, notes, outcome] of NO_ENQUIRY) {
+        if (!others.length) break;
+        const c = others.splice(int(0, others.length - 1), 1)[0];
+        insert('exhibition_visits', { campaign_id: cp.id, customer_id: c.id, visited_on: showDay(), met_by: c.owner_id, interest, notes, outcome, created_by: c.owner_id, created_at: stamp, updated_at: stamp });
+      }
     }
     // Opportunity details on open enquiries (estimate, probability, temperature, expected decision).
     for (const e of all("SELECT e.id, e.stage, c.segment FROM enquiries e JOIN customers c ON c.id = e.customer_id WHERE e.stage IN ('new','clarification','quote_to_prepare','quote_sent','awaiting_decision','on_hold')")) {
@@ -1061,8 +1142,30 @@ export function seed({ reset = false } = {}) {
   return { counts, failures };
 }
 
+// `node server/seed.js --reset` rebuilds the demo; `--clean` builds a clean installation instead.
+// A database holding accounts other than the demo ones is never erased unless --yes is given too.
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  seed({ reset: process.argv.includes('--reset') });
+  const args = process.argv.slice(2);
+  const reset = args.includes('--reset');
+  const count = (sql) => {
+    try {
+      return get(sql).n;
+    } catch {
+      return 0; // no tables yet
+    }
+  };
+  const realAccounts = count("SELECT COUNT(*) AS n FROM users WHERE email NOT LIKE '%@veritek.example'");
+  if (reset && realAccounts && !args.includes('--yes')) {
+    console.error(`Nothing was changed: ${DB_PATH} holds ${realAccounts} account(s) that are not demo accounts.\nRun again with --yes only if you really mean to erase everything in it.`);
+    process.exit(1);
+  }
+  if (!reset && count('SELECT COUNT(*) AS n FROM users')) {
+    console.error(`Nothing was changed: ${DB_PATH} already has data. Add --reset to rebuild it.`);
+    process.exit(1);
+  }
+  if (args.includes('--clean')) seedBaseline({ reset });
+  else seed({ reset });
+  closeDb();
 }
 
 export { today, nextCode, addContact, createTask, closeCase, openLinkedEnquiry, recordOutcome, isWorkingDay, now };

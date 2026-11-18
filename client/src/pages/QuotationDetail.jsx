@@ -10,7 +10,7 @@ import { date, dateTime, number, pct, qty as fmtQty, money } from '../lib/format
 import {
   Badge, Button, Card, ErrorState, Facts, Field, Logo, Modal, Notice, PageHeader, SaveStatus, Select, Spinner, Tabs, Textarea, useConfirm, useToast, EmptyState,
 } from '../components/ui.jsx';
-import { ApprovalBadge, Money, QuoteBadge, StageBadge, useMeta } from '../components/domain.jsx';
+import { ApprovalBadge, Money, QuoteBadge, StageBadge, useMeta, JourneyCard } from '../components/domain.jsx';
 import Icon from '../components/Icon.jsx';
 import { ConvertForm, IssueForm, OutcomeForm } from './EnquiryDetail.jsx';
 
@@ -85,6 +85,7 @@ export default function QuotationDetail() {
               }
             }}>Duplicate</Button>}
           </>} />
+        <JourneyCard quotationId={q.id} version={`${cur.id}-${cur.status}-${cur.approval_status}`} />
         <NextStep q={q} cur={cur} edit={edit} can={can} busy={busy} blockedIssue={blockedIssue} convertible={convertible} setModal={setModal} act={act} />
       </div>
 

@@ -1,5 +1,6 @@
-// Seeds a throwaway database, starts the API on a spare port and runs the acceptance journey and the
-// Objects & QR suite against it. The real database is never touched.
+// Seeds a throwaway database, starts the API on a spare port and runs the acceptance journey, the Objects &
+// QR suite and a read-only sweep of every endpoint against it, then checks a clean installation. The real
+// database is never touched.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -9,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, '..');
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'veritek-test-'));
-const env = { ...process.env, CRM_DATA_DIR: dataDir, CRM_DB: path.join(dataDir, 'test.sqlite'), PORT: '4399' };
+const env = { ...process.env, CRM_DATA_DIR: dataDir, PORT: '4399' };
 
 const run = (args, opts = {}) => new Promise((resolve, reject) => {
   const p = spawn(process.execPath, ['--no-warnings=ExperimentalWarning', ...args], { cwd: root, env, stdio: opts.quiet ? ['ignore', 'pipe', 'pipe'] : 'inherit' });
@@ -46,6 +47,9 @@ try {
   await waitForServer('http://localhost:4399/api/auth/me');
   await run(['tests/journey.mjs'], { quiet: false });
   await run(['tests/objects.mjs'], { quiet: false });
+  await run(['tests/flow.mjs'], { quiet: false });
+  await run(['tests/sweep.mjs'], { quiet: false });
+  await run(['tests/baseline.mjs'], { quiet: false }); // its own server and data folder
   code = 0;
 } catch (err) {
   console.error(`\n${err.message}`);

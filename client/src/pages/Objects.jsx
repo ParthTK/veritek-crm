@@ -5,6 +5,7 @@ import { api, uploadFile, downloadAuthed, openFile } from '../api.js';
 import { useAuth } from '../auth.jsx';
 import { useApi, useUrlFilters } from '../lib/hooks.js';
 import { date, timeAgo, number, fileSize, downloadCsv } from '../lib/format.js';
+import { ObjectsCard } from './Settings.jsx';
 import {
   Badge, Button, Card, Checkbox, DataTable, EmptyState, Field, Input, Modal, Notice, PageHeader, Pagination,
   SearchBox, Select, Spinner, Tabs, Textarea, Tile, useConfirm, useToast,
@@ -27,6 +28,7 @@ export default function Objects() {
   const [selected, setSelected] = useState([]);
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [qrSettings, setQrSettings] = useState(false);
   const editable = can('objects.edit');
 
   const toggle = (id) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
@@ -100,11 +102,13 @@ export default function Objects() {
 
   return (
     <div className="stack">
+      {qrSettings && <QrSettingsDialog onClose={() => setQrSettings(false)} />}
       <PageHeader
         title="Objects & QR codes"
         subtitle="Create an object, attach anything, print one code — update the information for years without reprinting"
         actions={(
           <>
+            {can('settings.manage') && <Button icon="settings" onClick={() => setQrSettings(true)}>QR settings</Button>}
             {selected.length > 0 && (
               <>
                 <Button icon="printer" to={`/objects/labels?ids=${selected.join(',')}`}>Print {selected.length} labels</Button>
@@ -563,6 +567,21 @@ function ImportModal({ open, onClose, onDone, categories }) {
           </div>
         </div>
       )}
+    </Modal>
+  );
+}
+
+
+/** Public address, colours and label options for QR codes: settings that belong to this module alone. */
+function QrSettingsDialog({ onClose }) {
+  const { data } = useApi('/admin/settings');
+  const save = async (body) => {
+    await api.put('/admin/settings/objects', body);
+    onClose();
+  };
+  return (
+    <Modal open size="lg" onClose={onClose} title="QR settings">
+      {data ? <ObjectsCard objects={data.objects} onSave={save} /> : <div className="muted small">Loading…</div>}
     </Modal>
   );
 }

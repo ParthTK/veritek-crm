@@ -259,8 +259,7 @@ export function nameSimilarity(a, b) {
 // ------------------------------------------------------------------ codes
 /** Readable sequential codes: CUS-0042, ENQ-1288, Q-2041, SO-1042. Immutable once issued. */
 export function nextCode(prefix, width = 4) {
-  run('INSERT INTO counters (key, value) VALUES (?, 1) ON CONFLICT(key) DO UPDATE SET value = value + 1', prefix);
-  const n = get('SELECT value FROM counters WHERE key = ?', prefix).value;
+  const n = get('INSERT INTO counters (key, value) VALUES (?, 1) ON CONFLICT(key) DO UPDATE SET value = counters.value + 1 RETURNING value', prefix).value;
   return `${prefix}-${String(n).padStart(width, '0')}`;
 }
 export function setCounter(prefix, value) {
@@ -277,7 +276,7 @@ export function installSecret() {
   if (installSecretCache) return installSecretCache;
   let row = get("SELECT value FROM settings WHERE key = 'install_secret'");
   if (!row) {
-    run("INSERT OR IGNORE INTO settings (key, value) VALUES ('install_secret', ?)", JSON.stringify(token(32)));
+    run("INSERT INTO settings (key, value) VALUES ('install_secret', ?) ON CONFLICT DO NOTHING", JSON.stringify(token(32)));
     row = get("SELECT value FROM settings WHERE key = 'install_secret'");
   }
   installSecretCache = JSON.parse(row.value);
@@ -342,8 +341,8 @@ export function diff(before, after, fields) {
 export function notify(userId, { title, message, link, severity = 'info', dedupeKey, alertId }) {
   if (!userId) return 0;
   const res = run(
-    `INSERT OR IGNORE INTO notifications (user_id, alert_id, title, message, link, severity, dedupe_key, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO notifications (user_id, alert_id, title, message, link, severity, dedupe_key, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
     userId, alertId ?? null, title, message ?? null, link ?? null, severity, dedupeKey ?? null, nowIso(),
   );
   return Number(res.changes);

@@ -5,7 +5,7 @@ import { useApi, useUrlFilters } from '../lib/hooks.js';
 import { downloadAuthed } from '../api.js';
 import { compactByCurrency, compactMoney, date, qty, relDay, timeAgo } from '../lib/format.js';
 import { Badge, Button, Card, Chips, DataTable, ErrorState, PageHeader, Pagination, SearchBox, Segmented, Select, Spinner, Stat, useToast, EmptyState } from '../components/ui.jsx';
-import { DueBadge, StageBadge, QuoteBadge, FilterBar, useOptions, useMeta } from '../components/domain.jsx';
+import { DueBadge, StageBadge, QuoteBadge, FilterBar, useOptions, useMeta, ReplyBadge } from '../components/domain.jsx';
 import { useQuickEntry } from '../components/QuickEntry.jsx';
 
 export default function Enquiries() {
@@ -18,7 +18,7 @@ export default function Enquiries() {
     <div className="stack">
       <PageHeader title="Enquiries" subtitle={pipeline ? 'Open opportunities by stage, with value, probability and the expected decision date.' : 'Response, quotation, decision and follow-up for every enquiry.'}
         actions={<>
-          <Segmented label="View" value={pipeline ? 'pipeline' : 'list'} onChange={(v) => setF({ view: v })} options={[{ value: 'list', label: 'List' }, { value: 'pipeline', label: 'Pipeline' }]} />
+          <Segmented label="View" value={pipeline ? 'pipeline' : 'list'} onChange={(v) => setF({ view: v })} options={[{ value: 'list', label: 'List' }, { value: 'pipeline', label: 'Stage board' }]} />
           {can('export.lists') && !pipeline && <Button icon="download" onClick={() => downloadAuthed('/export/enquiries.csv', f).catch((e) => toast.error(e.message))}>Export</Button>}
           {can('enquiries.edit') && <Button variant="cta" icon="plus" onClick={() => quick.open('enquiry')}>New enquiry</Button>}
         </>} />
@@ -54,10 +54,15 @@ function EnquiryList({ f, setF }) {
         { value: 'won', label: 'Won', count: sc.won || 0 }, { value: 'lost', label: 'Lost', count: sc.lost || 0 }, { value: 'cancelled', label: 'Cancelled', count: sc.cancelled || 0 },
         { value: 'all', label: 'Everything' },
       ]} />
+      <Chips value={f.reply || ''} onChange={(v) => setF({ reply: v })} options={[
+        { value: '', label: 'Any reply status' },
+        { value: 'unreplied', label: 'Not replied', tone: 'red', count: data?.reply_counts?.unreplied },
+        { value: 'replied', label: 'Replied', count: data?.reply_counts?.replied },
+      ]} />
       <div className="filter-bar">
         <SearchBox value={f.q} onChange={(v) => setF({ q: v })} placeholder="Enquiry, customer, product…" />
         <Select aria-label="Source" value={f.source || ''} onChange={(e) => setF({ source: e.target.value })} options={sources} placeholder="All sources" />
-        {meta.campaigns.length > 0 && <Select aria-label="Campaign" value={f.campaign_id || ''} onChange={(e) => setF({ campaign_id: e.target.value })} options={meta.campaigns.map((c) => ({ value: String(c.id), label: c.name }))} placeholder="Any campaign" />}
+        {meta.campaigns.length > 0 && <Select aria-label="Campaign" value={f.campaign_id || ''} onChange={(e) => setF({ campaign_id: e.target.value })} options={meta.campaigns.map((c) => ({ value: String(c.id), label: c.name }))} placeholder="Any exhibition / event" />}
         <Select aria-label="Flags" value={f.no_next ? 'no_next' : f.no_response ? 'no_response' : ''} onChange={(e) => setF({ no_next: e.target.value === 'no_next' ? '1' : '', no_response: e.target.value === 'no_response' ? '1' : '' })}
           options={[{ value: 'no_next', label: 'Without a next action' }, { value: 'no_response', label: 'No first response yet' }]} placeholder="All" />
         <ExtraFilters f={f} setF={setF} />
@@ -70,11 +75,12 @@ function EnquiryList({ f, setF }) {
             { key: 'customer', label: 'Customer', render: (r) => <><strong>{r.customer_name}</strong><div className="sub">{r.code} · {r.source_label}{r.source_event ? ` · ${r.source_event}` : ''}</div></> },
             { key: 'product', label: 'Product', render: (r) => <>{r.title ? <div className="small strong">{r.title}</div> : null}{r.product}{r.line_count > 1 && <span className="muted"> +{r.line_count - 1}</span>}<div className="sub">{r.qty ? qty(r.qty, r.unit) : 'Qty unknown'}</div>{r.missing_lines > 0 && <Badge size="sm" tone="amber">Details missing</Badge>}</> },
             { key: 'stage', label: 'Status', render: (r) => <span className="stack-xs"><span className="row wrap" style={{ gap: 4 }}><StageBadge stage={r.stage} />{r.temperature && <Badge size="sm" tone={toneOf(TEMPERATURES, r.temperature)}>{labelOf(TEMPERATURES, r.temperature)}</Badge>}</span>{r.quote_ref && <span className="tiny muted">{r.quote_ref} <QuoteBadge status={r.quote_status} size="sm" /></span>}</span> },
+            { key: 'reply', label: 'Reply', render: (r) => <span className="stack-xs"><ReplyBadge replied={Boolean(r.first_response_at)} />{r.first_response_at && <span className="tiny muted">{timeAgo(r.first_response_at)}</span>}</span> },
             values && { key: 'value', label: 'Est. value', align: 'num', render: (r) => (r.est_value_minor ? <span className="small">{compactMoney(r.est_value_minor, r.est_currency)}{r.probability !== null && r.probability !== undefined ? <div className="tiny muted">{r.probability}%</div> : null}</span> : <span className="muted">—</span>) },
             { key: 'next', label: 'Next action', render: (r) => (r.next_task ? r.next_task.purpose : r.stage === 'lost' ? <span className="small">Lost: {r.lost_reason}</span> : r.no_followup_reason ? <span className="muted small">No follow-up: {r.no_followup_reason}</span> : ['won', 'cancelled'].includes(r.stage) ? <span className="muted">—</span> : <Badge tone="red">No next action</Badge>) },
             { key: 'due', label: 'Due', render: (r) => (r.next_task ? <DueBadge task={r.next_task} /> : <span className="muted">—</span>) },
             { key: 'owner', label: 'Owner', render: (r) => r.owner_name },
-            { key: 'received', label: 'Received', render: (r) => <span className="small">{r.received_unknown ? 'Unknown' : timeAgo(r.received_at)}{!r.first_response_at && r.stage === 'new' && <div><Badge size="sm" tone="amber">Awaiting response</Badge></div>}</span> },
+            { key: 'received', label: 'Received', render: (r) => <span className="small">{r.received_unknown ? 'Unknown' : timeAgo(r.received_at)}</span> },
           ]}
           card={(r) => <><div className="row between"><strong>{r.customer_name}</strong><StageBadge stage={r.stage} size="sm" /></div><div className="small">{r.product} · {r.qty ? qty(r.qty, r.unit) : 'qty unknown'}</div>{r.next_task && <div className="row"><DueBadge task={r.next_task} /><span className="small">{r.next_task.purpose}</span></div>}</>}
         />

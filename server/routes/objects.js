@@ -1,6 +1,5 @@
 // Objects & QR codes (signed-in users). Public scan pages are served by routes/public.js.
 import { Router } from 'express';
-import fs from 'node:fs';
 import { all, get, run, insert, update, tx } from '../db.js';
 import { allow, hasPerm } from '../auth.js';
 import { OBJECT_VISIBILITY } from '../../shared/constants.js';
@@ -9,7 +8,7 @@ import {
 } from '../util.js';
 import {
   createObject, updateObject, archiveObject, deleteObject, duplicateObject, attachFile, updateFile, removeFile,
-  reorderFiles, restoreFileVersion, objectFiles, ensureCode, scanStats, publicUrlFor, normalizeFields, objectHealth, objectSettings, filePath,
+  reorderFiles, restoreFileVersion, objectFiles, ensureCode, scanStats, publicUrlFor, normalizeFields, objectHealth, objectSettings, fileData,
 } from '../services/objects.js';
 import { qrPng, qrSvg, barcodePng, barcodeSvg, zipFiles } from '../lib/codes.js';
 import { xlsxToSheets, csvToRows } from '../lib/docpreview.js';
@@ -253,9 +252,8 @@ r.delete('/object-categories/:id', allow('objects.manage'), h((req) => {
 function readImportFile(attachmentId) {
   const a = get('SELECT * FROM attachments WHERE id = ?', attachmentId);
   if (!a) throw badRequest('Upload the spreadsheet first');
-  const p = filePath(a);
-  if (!fs.existsSync(p)) throw notFound('Uploaded file');
-  const buffer = fs.readFileSync(p);
+  const buffer = fileData(a);
+  if (!buffer) throw notFound('Uploaded file');
   const ext = a.original_name.toLowerCase().split('.').pop();
   const rows = ext === 'csv' || ext === 'txt' ? csvToRows(buffer.toString('utf8'), { maxRows: 2000, maxCols: 40 }) : xlsxToSheets(buffer, { maxRows: 2000, maxCols: 40 })[0]?.rows;
   if (!rows?.length) throw badRequest('The file has no rows');

@@ -1,8 +1,8 @@
 // Import wizard: template → upload → map → preview (no writes) → resolve duplicates → idempotent commit
 // → result log → retry failed rows → guarded rollback. Unknown historical values stay unknown.
-import fs from 'node:fs';
 import path from 'node:path';
-import { all, get, insert, run, tx, update, FILE_DIR } from '../db.js';
+import { all, get, insert, run, tx, update } from '../db.js';
+import { putFile, getFile } from '../storage.js';
 import {
   HttpError, badRequest, conflict, notFound, nowIso, today, str, intId, bool, sha256, token, normName, normEmail, normPhone, audit, settings, calendar,
 } from '../util.js';
@@ -116,7 +116,7 @@ export function storeUpload(buffer, name, user) {
   }
   const t = token(16);
   const storageKey = `import-${Date.now().toString(36)}-${token(8)}`;
-  fs.writeFileSync(path.join(FILE_DIR, storageKey), buffer);
+  putFile(storageKey, buffer, { overwrite: true });
   const checksum = sha256(buffer);
   insert('import_uploads', { token: t, file_name: path.basename(String(name)).slice(-120), checksum, size: buffer.length, storage_key: storageKey, uploaded_by: user.id, created_at: nowIso() });
   return {
@@ -129,7 +129,8 @@ export function storeUpload(buffer, name, user) {
 function loadUpload(uploadId) {
   const u = get('SELECT * FROM import_uploads WHERE token = ?', uploadId);
   if (!u) throw notFound('Uploaded file');
-  const buffer = fs.readFileSync(path.join(FILE_DIR, u.storage_key));
+  const buffer = getFile(u.storage_key);
+  if (!buffer) throw notFound('Uploaded file');
   return { upload: u, sheets: sheetsFromUpload(buffer, u.file_name) };
 }
 

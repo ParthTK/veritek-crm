@@ -16,11 +16,14 @@
     "seed": "node --no-warnings=ExperimentalWarning server/seed.js --reset",
     "test": "node --no-warnings=ExperimentalWarning tests/run.mjs",
     "snapshot": "node --no-warnings=ExperimentalWarning scripts/snapshot.js",
-    "backup": "node --no-warnings=ExperimentalWarning scripts/backup.js",
-    "restore-test": "node --no-warnings=ExperimentalWarning scripts/backup.js --restore-test"
+    "backup": "node scripts/backup.js",
+    "restore-test": "node scripts/backup.js --restore-test",
+    "restore": "node scripts/restore.js"
   },
   "dependencies": {
+    "@electric-sql/pglite": "^0.5.16",
     "express": "^5.1.0",
+    "pg": "^8.23.1",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {

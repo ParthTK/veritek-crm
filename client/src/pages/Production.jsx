@@ -7,7 +7,7 @@ import { useAuth } from '../auth.jsx';
 import { useApi, useUrlFilters } from '../lib/hooks.js';
 import { date, qty, relDay, timeAgo } from '../lib/format.js';
 import { Badge, Button, Chips, Drawer, EmptyState, ErrorState, PageHeader, Select, Spinner } from '../components/ui.jsx';
-import { LineStateBadge, useMeta } from '../components/domain.jsx';
+import { LineStateBadge, useMeta, PaymentBadge } from '../components/domain.jsx';
 import { ProductionUpdateForm } from '../components/forms.jsx';
 
 export default function Production() {
@@ -46,7 +46,7 @@ export default function Production() {
                         <LineStateBadge state={l.state} daysLate={l.days_late} size="sm" />
                       </span>
                     </div>
-                    <div className="tiny muted truncate">{l.customer_name}</div>
+                    <div className="row between" style={{ gap: 4 }}><span className="tiny muted truncate">{l.customer_name}</span><PaymentBadge payment={l.payment} /></div>
                     <div className="small mt-8"><strong>{l.product}</strong> · {qty(l.quantities.remaining, l.unit)} to go{l.quantities.ready !== null && l.quantities.ready !== undefined ? ` · ${qty(l.quantities.readyNotDispatched)} ready` : ''}</div>
                     <div className="tiny muted">{l.work_status_label}{l.needs_clarification ? ' · specification to clarify' : ''}</div>
                     {l.issue_label && <div className="tiny warning-text strong">{l.issue_label}{l.stage_note ? ` — ${l.stage_note}` : ''}</div>}

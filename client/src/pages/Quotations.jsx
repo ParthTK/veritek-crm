@@ -1,22 +1,20 @@
 // Quotation register: the latest revision of every quotation, with what needs attention first —
 // approvals, quotations awaiting a decision, expiring and expired offers.
 import { Link, useNavigate } from 'react-router-dom';
-import { QUOTE_STATUSES, labelOf, toneOf } from '@shared/constants.js';
+import { QUOTE_STATUSES, labelOf, toneOf, QUOTE_TRACKING } from '@shared/constants.js';
 import { useAuth } from '../auth.jsx';
 import { useApi, useUrlFilters } from '../lib/hooks.js';
 import { date, dateTime, pct, relDay, compactMoney } from '../lib/format.js';
 import { Badge, Button, Card, Chips, DataTable, ErrorState, PageHeader, Pagination, SearchBox, Select, EmptyState } from '../components/ui.jsx';
 import { ApprovalBadge, Money, QuoteBadge, useMeta, usePeople } from '../components/domain.jsx';
 
-const VIEWS = [
+// Pending, sent, approved or rejected first; the narrower working views after them.
+const views = (t) => [
   { value: '', label: 'All' },
-  { value: 'draft', label: 'Drafts' },
-  { value: 'approval', label: 'Needs approval' },
-  { value: 'awaiting', label: 'Awaiting decision' },
+  ...QUOTE_TRACKING.map((s) => ({ value: s.value, label: s.label, tone: s.tone, count: t?.[s.value] })),
+  { value: 'approval', label: 'Needs internal approval' },
   { value: 'expiring', label: 'Expiring in 7 days' },
   { value: 'expired', label: 'Expired' },
-  { value: 'accepted', label: 'Accepted' },
-  { value: 'rejected', label: 'Rejected' },
 ];
 
 export default function Quotations() {
@@ -59,12 +57,12 @@ export default function Quotations() {
       <PageHeader title="Quotations" subtitle="Every quotation with its latest revision. Issued revisions never change — a change is a new revision."
         actions={can('quotes.edit') && <Button variant="primary" icon="plus" to="/quotations/new">New quotation</Button>} />
       <div className="tiles">
-        <TileLink label="Needs approval" n={data?.attention?.approval ?? '—'} foot="Drafts outside the discount or margin policy" onClick={() => setFilter({ status: 'approval' })} alert={data?.attention?.approval > 0} />
-        <TileLink label="Awaiting decision" n={count('issued')} foot={values ? valueText('issued') : 'Issued, no decision yet'} onClick={() => setFilter({ status: 'awaiting' })} />
-        <TileLink label="Accepted" n={count('accepted')} foot={values ? valueText('accepted') : undefined} onClick={() => setFilter({ status: 'accepted' })} />
-        <TileLink label="Expiring or expired" n={data ? data.attention.expiring + data.attention.expired : '—'} foot={data ? `${data.attention.expiring} within 7 days · ${data.attention.expired} already expired` : undefined} onClick={() => setFilter({ status: data?.attention?.expired ? 'expired' : 'expiring' })} alert={data?.attention?.expired > 0} />
+        <TileLink label="Pending" n={data?.tracking?.pending ?? '—'} foot={data ? `Not sent yet · ${data.attention.approval} need internal approval` : undefined} onClick={() => setFilter({ status: 'pending' })} alert={data?.attention?.approval > 0} />
+        <TileLink label="Sent" n={count('issued')} foot={values ? valueText('issued') : 'Awaiting the customer'} onClick={() => setFilter({ status: 'sent' })} />
+        <TileLink label="Approved" n={count('accepted')} foot={values ? valueText('accepted') : 'By the customer'} onClick={() => setFilter({ status: 'approved' })} />
+        <TileLink label="Rejected" n={count('rejected')} foot={values ? valueText('rejected') : undefined} onClick={() => setFilter({ status: 'rejected' })} />
       </div>
-      <Chips options={VIEWS} value={f.status || ''} onChange={(v) => setFilter({ status: v })} />
+      <Chips options={views(data?.tracking)} value={f.status || ''} onChange={(v) => setFilter({ status: v })} />
       <div className="filter-bar">
         <SearchBox value={f.q} onChange={(q) => setFilter({ q })} placeholder="Number, customer, subject or enquiry" />
         <Select aria-label="Owner" value={f.owner || ''} onChange={(e) => setFilter({ owner: e.target.value })} placeholder="All owners" options={people.filter((p) => ['admin', 'coordinator', 'sales'].includes(p.group)).map((p) => ({ value: String(p.id), label: p.name }))} />

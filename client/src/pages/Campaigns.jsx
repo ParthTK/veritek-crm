@@ -1,4 +1,4 @@
-// Exhibitions & campaigns: each event with its enquiry funnel, quotations, orders, revenue and cost.
+// Exhibitions and other events: customers met, enquiries generated, quotations, orders, revenue and cost.
 // Money stays per currency; ROI only where cost and revenue share a currency.
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -7,7 +7,7 @@ import { api } from '../api.js';
 import { useAuth } from '../auth.jsx';
 import { useApi, useSave, useUrlFilters } from '../lib/hooks.js';
 import { date, number, pct, compactByCurrency, compactMoney } from '../lib/format.js';
-import { Badge, Button, Card, Chips, EmptyState, ErrorState, Field, Input, Modal, PageHeader, SaveStatus, Select, Spinner, Textarea } from '../components/ui.jsx';
+import { Badge, Button, Card, Chips, EmptyState, ErrorState, Field, Input, Modal, PageHeader, SaveStatus, Select, Spinner, Textarea, Stat } from '../components/ui.jsx';
 import { UserSelect } from '../components/domain.jsx';
 
 export default function Campaigns() {
@@ -17,17 +17,26 @@ export default function Campaigns() {
   const { data, error, loading, reload } = useApi('/campaigns', { status: f.status, type: f.type });
   const [editing, setEditing] = useState(null);
   const values = can('values.view');
+  const shows = (data || []).filter((c) => c.type === 'exhibition');
   return (
     <div className="stack">
-      <PageHeader title="Exhibitions & campaigns" subtitle="Enquiries, follow-ups, quotations and orders from each event — with cost and return where the currency matches"
-        actions={can('campaigns.edit') && <Button variant="primary" icon="plus" onClick={() => setEditing({})}>New campaign</Button>} />
+      <PageHeader title="Exhibitions" subtitle="Exhibitions attended, the customers met there and the enquiries they generated — plus dealer meets and other events"
+        actions={can('campaigns.edit') && <Button variant="primary" icon="plus" onClick={() => setEditing({})}>New exhibition</Button>} />
+      {data && data.length > 0 && (
+        <div className="tiles">
+          <Stat k="Exhibitions attended" v={number(shows.filter((c) => ['active', 'completed'].includes(c.status)).length)} d={`${number(shows.filter((c) => c.status === 'planned').length)} planned`} />
+          <Stat k="Customers visited" v={number(shows.reduce((n, c) => n + c.metrics.visitors, 0))} d={`${number(shows.reduce((n, c) => n + c.metrics.visitors_to_follow_up, 0))} still to follow up`} />
+          <Stat k="Enquiries generated" v={number(shows.reduce((n, c) => n + c.metrics.enquiries, 0))} d={`${number(shows.reduce((n, c) => n + c.metrics.open, 0))} still open`} />
+          <Stat k="Enquiries won" v={number(shows.reduce((n, c) => n + c.metrics.won, 0))} d={`${number(shows.reduce((n, c) => n + c.metrics.quoted, 0))} quoted`} />
+        </div>
+      )}
       <div className="row wrap between">
         <Chips options={[{ value: '', label: 'All' }, ...CAMPAIGN_STATUSES]} value={f.status || ''} onChange={(v) => setFilter({ status: v })} />
         <Select aria-label="Type" value={f.type || ''} onChange={(e) => setFilter({ type: e.target.value })} placeholder="All types" options={CAMPAIGN_TYPES} style={{ width: 'auto' }} />
       </div>
       {error && <ErrorState error={error} onRetry={reload} />}
       {!data && loading && <Spinner />}
-      {data && !data.length && <EmptyState icon="campaigns" title="No campaigns yet" message="Create one per exhibition, dealer meet or launch, then tag the enquiries it brings in." />}
+      {data && !data.length && <EmptyState icon="campaigns" title="No exhibitions yet" message="Add each exhibition you attend, then record the customers you meet and the enquiries they bring." />}
       <div className="grid grid-3">
         {(data || []).map((c) => {
           const m = c.metrics;
@@ -42,10 +51,11 @@ export default function Campaigns() {
                   </div>
                   <Badge size="sm" tone={toneOf(CAMPAIGN_STATUSES, c.status)}>{c.status_label}</Badge>
                 </div>
-                <div className="grid grid-3" style={{ gap: 8 }}>
-                  <MiniStat k="Enquiries" v={number(m.enquiries)} d={c.target_leads ? `of ${c.target_leads} target` : null} />
+                <div className="grid" style={{ gap: 8, gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
+                  <MiniStat k="Visited" v={c.type === 'exhibition' ? number(m.visitors) : '—'} />
+                  <MiniStat k="Enquiries" v={number(m.enquiries)} d={c.target_leads ? `of ${c.target_leads}` : null} />
                   <MiniStat k="Quoted" v={number(m.quoted)} />
-                  <MiniStat k="Won" v={number(m.won)} d={m.conversion_pct !== null ? `${pct(m.conversion_pct)} conversion` : null} />
+                  <MiniStat k="Won" v={number(m.won)} d={m.conversion_pct !== null ? pct(m.conversion_pct) : null} />
                 </div>
                 {m.target_progress_pct !== null && <div className="progress" title={`${m.target_progress_pct}% of the enquiry target`}><span style={{ width: `${Math.min(100, m.target_progress_pct)}%` }} /></div>}
                 {values && (
@@ -84,8 +94,8 @@ export function CampaignForm({ campaign, onClose, onSaved }) {
     return r;
   });
   return (
-    <Modal open size="lg" onClose={onClose} title={campaign ? `Edit ${campaign.name}` : 'New campaign'}
-      footer={<><SaveStatus save={save} /><Button onClick={onClose}>Cancel</Button><Button variant="primary" loading={save.saving} onClick={submit}>Save campaign</Button></>}>
+    <Modal open size="lg" onClose={onClose} title={campaign ? `Edit ${campaign.name}` : 'New exhibition or event'}
+      footer={<><SaveStatus save={save} /><Button onClick={onClose}>Cancel</Button><Button variant="primary" loading={save.saving} onClick={submit}>Save</Button></>}>
       <div className="form-grid">
         <Field label="Name" required className="full" error={err('name')}><Input value={f.name} onChange={(e) => set({ name: e.target.value })} placeholder="e.g. ELECRAMA 2026" /></Field>
         <Field label="Type" error={err('type')}><Select value={f.type} onChange={(e) => set({ type: e.target.value })} options={CAMPAIGN_TYPES} /></Field>

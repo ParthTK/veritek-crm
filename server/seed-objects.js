@@ -59,6 +59,7 @@ export function buildXlsx(sheetName, rows) {
 }
 
 // ------------------------------------------------------------------ demo content
+// The category templates are generic set-up, so a clean installation starts with them too.
 const CATEGORIES = [
   {
     name: 'Machines & equipment', description: 'Anything on the shop floor or at a customer site',
@@ -83,18 +84,24 @@ const CATEGORIES = [
 
 const fieldKey = (label) => label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 
+/** Creates the starter object categories (with their field templates). Returns name → id. */
+export function seedObjectCategories(adminId) {
+  const ids = {};
+  for (const c of CATEGORIES) {
+    ids[c.name] = insert('object_categories', {
+      name: c.name, description: c.description,
+      field_template: JSON.stringify(c.fields.map((f) => ({ key: fieldKey(f.label), ...f, public: true }))), created_by: adminId, created_at: nowIso(),
+    });
+  }
+  return ids;
+}
+
 /** Seeds the object register. `users` are publicUser objects; `products` maps product code to id. */
 export function seedObjects({ users, products, rand }) {
   const ri = (a, b) => a + Math.floor(rand() * (b - a + 1));
   const pick = (arr) => arr[Math.floor(rand() * arr.length)];
   const admin = users.admin;
-  const categoryIds = {};
-  for (const c of CATEGORIES) {
-    categoryIds[c.name] = insert('object_categories', {
-      name: c.name, description: c.description,
-      field_template: JSON.stringify(c.fields.map((f) => ({ key: fieldKey(f.label), ...f, public: true }))), created_by: admin.id, created_at: nowIso(),
-    });
-  }
+  const categoryIds = seedObjectCategories(admin.id);
   const customerFor = (name) => get('SELECT id, company_name FROM customers WHERE company_name = ? AND merged_into_id IS NULL', name);
   const orderFor = (customerId) => get("SELECT id FROM orders WHERE customer_id = ? AND status = 'confirmed' ORDER BY received_date DESC LIMIT 1", customerId);
 

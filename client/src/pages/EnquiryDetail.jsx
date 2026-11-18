@@ -10,8 +10,7 @@ import {
   Badge, Button, Card, ErrorState, Field, Input, Modal, Notice, PageHeader, Popover, SaveStatus, Select, Spinner, Textarea, Checkbox, useToast, Facts, Segmented,
 } from '../components/ui.jsx';
 import {
-  StageBadge, QuoteBadge, ApprovalBadge, DueBadge, Timeline, Attachments, OptionSelect, UserSelect, DateField, PurposeInput, Money, FilePick, useOptions, useMeta, useOptionLabel,
-} from '../components/domain.jsx';
+  StageBadge, QuoteBadge, ApprovalBadge, DueBadge, Timeline, Attachments, OptionSelect, UserSelect, DateField, PurposeInput, Money, FilePick, useOptions, useMeta, useOptionLabel, JourneyCard, ReplyBadge } from '../components/domain.jsx';
 import { FollowupForm, RescheduleForm, fromLocalInput } from '../components/forms.jsx';
 
 export default function EnquiryDetail() {
@@ -44,7 +43,7 @@ export default function EnquiryDetail() {
     <div className="stack">
       <PageHeader crumbs={[{ label: 'Enquiries', to: '/enquiries' }, { label: e.code }]}
         eyebrow={<>{e.code} · {e.source_label}{e.source_event ? ` (${e.source_event})` : ''} · received {e.received_unknown ? 'date unknown' : dateTime(e.received_at)}</>}
-        title={<><Link to={`/customers/${e.customer_id}`}>{e.customer_name}</Link> <StageBadge stage={e.stage} /></>}
+        title={<><Link to={`/customers/${e.customer_id}`}>{e.customer_name}</Link> <StageBadge stage={e.stage} /> <ReplyBadge replied={Boolean(e.first_response_at)} size="md" /></>}
         subtitle={<>Owner {e.owner_name}{e.contact_name ? ` · contact ${e.contact_name}${e.contact_phone ? ` (${e.contact_phone})` : ''}` : ''}{e.first_response_at ? ` · first response ${dateTime(e.first_response_at)}` : ' · no response recorded yet'}</>}
         actions={edit && (e.open ? (
           <>
@@ -67,6 +66,7 @@ export default function EnquiryDetail() {
           </>
         ))}
       />
+      <JourneyCard enquiryId={e.id} version={e.version} />
       {missing.length > 0 && e.open && <Notice tone="warn" title="Missing before quotation or order confirmation">{missing.join(' · ')}</Notice>}
       {e.stage === 'lost' && <Notice tone="danger" title={`Lost — ${e.lost_reason || 'reason not recorded'}`}>{e.lost_note}{e.competitor ? ` Competitor: ${e.competitor}.` : ''} Decided {date(e.decided_at)}. This reason belongs to this opportunity only.</Notice>}
       {e.stage === 'cancelled' && <Notice tone="info" title={`Cancelled — ${e.cancel_reason}`}>{e.cancel_note}{e.duplicate_of_code ? ` Duplicate of ${e.duplicate_of_code}.` : ''} Not counted as a commercial loss.</Notice>}
@@ -135,13 +135,13 @@ export default function EnquiryDetail() {
               ['Probability', e.probability !== null && e.probability !== undefined ? `${e.probability}%` : <span className="muted">Stage default ({ENQUIRY_STAGES.find((x) => x.value === e.stage)?.probability ?? 0}%)</span>],
               ['Temperature', e.temperature ? <Badge size="sm" tone={toneOf(TEMPERATURES, e.temperature)}>{labelOf(TEMPERATURES, e.temperature)}</Badge> : null],
               ['Decision expected', e.expected_decision_date ? <span className={e.expected_decision_date < todayLocal() && e.open ? 'danger-text strong' : ''}>{date(e.expected_decision_date, { year: true })} ({relDay(e.expected_decision_date)})</span> : null],
-              ['Campaign', e.campaign_id ? <Link to={`/campaigns/${e.campaign_id}`}>{e.campaign_name || 'Campaign'}</Link> : null],
+              [e.source_code === 'exhibition' ? 'Exhibition' : 'Event', e.campaign_id ? <Link to={`/campaigns/${e.campaign_id}`}>{e.campaign_name || 'Campaign'}</Link> : null],
             ]} />
           </Card>
           <Card title="Details">
             <Facts items={[
               ['Received', e.received_unknown ? 'Unknown (historical)' : dateTime(e.received_at)],
-              ['First response', e.first_response_at ? dateTime(e.first_response_at) : 'Not yet'],
+              ['Reply', e.first_response_at ? <><ReplyBadge replied /> {dateTime(e.first_response_at)}</> : <ReplyBadge replied={false} />],
               ['Source', `${e.source_label}${e.source_event ? ` — ${e.source_event}` : ''}`],
               ['Owner', e.owner_name],
               ['Reopened', e.reopened_count ? `${e.reopened_count}×` : null],

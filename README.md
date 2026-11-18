@@ -16,35 +16,38 @@ Enquiry → Quotation (approval) → Customer link → Order → Production → 
 
 | Area | What it does |
 |---|---|
-| **Overview & work queue** | Exceptions first: overdue follow-ups, late or stale order lines, customers not informed, approvals waiting |
+| **Overview & work queue** | Daily enquiries, replied / not replied, pending quotations, active orders, production status and delays, then the exceptions: overdue follow-ups, late or stale order lines, customers not informed, approvals waiting |
 | **Follow-ups** | One task list for every person; outcomes recorded in a few taps, the next action scheduled in the same step |
 | **Sales dashboard** | Enquiries, weighted pipeline, quotations, orders, receivables, target vs achievement, salespeople |
 | **Past customers** | Dormant buyers to reconnect with, with reasons and outcomes kept |
-| **Enquiries & pipeline** | Capture in under a minute (customer, product, source, owner, next action); kanban by stage with a 30/60/90-day forecast |
+| **Customers & contacts** | The starting point: unified profile (history, enquiries, quotations, orders, payments, complaints, exhibitions visited, deals in progress); duplicate checks and merge; regions, tags, interests, credit hold |
+| **Enquiries** | Added against a customer: details, notes, source, reply status, follow-ups and assigned person; list and stage board with a 30/60/90-day forecast |
 | **Quotations** | Builder priced from the product master (standard / dealer / distributor list), configurator options, discounts, GST, freight; approval routing; immutable revisions with comparison; issue evidence; customer link to accept or ask for changes; idempotent conversion to an order |
-| **Customers & contacts** | Unified profile (history, enquiries, quotations, orders, payments, complaints, equipment); duplicate checks and merge; regions, tags, interests, credit hold |
-| **Campaigns** | Exhibitions and events with their enquiry funnel, follow-up by salesperson, cost and return per currency |
-| **Active orders** | Line-level quantities, original / forecast / agreed dates kept separately, delay reasons, customer communication, cancellations, amendments, payment holds |
-| **Production board** | Every active line by phase with blocker, forecast and freshness; QC passes recorded by Quality |
+| **Sales pipeline** | Every live deal across enquiry → quotation → confirmation → payment → production → dispatch, showing where it is, how long it has been there and why it is stuck |
+| **Exhibitions** | Exhibitions attended, customers visited and enquiries generated (Exhibition as a lead source is linked to the event), follow-up by salesperson, cost and return; also dealer meets and other events |
+| **Active orders** | Line-level quantities, production progress, payment status, original / forecast / agreed dates kept separately, delay reasons, customer communication, cancellations, amendments, payment holds |
+| **Production board** | Every active line by phase with blocker, forecast, payment status and freshness; QC passes recorded by Quality |
 | **Dispatches** | Planned and actual shipments, transport details, delivery and proof of delivery, customer notification, reversals |
 | **Payments** | Invoice register, receipts with TDS and deductions, credit notes, advances, ageing, promises, holds |
 | **Complaints & service** | Severity, warranty, site visits, root cause vs reported symptom, resolution, feedback rating, quality insights |
 | **Products & prices** | Price list with minimum price and cost, GST, warranty, lead time, configurator options, datasheets |
-| **Objects & QR** | Permanent QR codes for machines, panels and documents; public scan pages; labels |
+| **QR module** | A separate module, not part of the sales flow: permanent QR codes for machines, panels and documents; public scan pages; labels; its own settings |
 | **Reports** | 24 defined reports with stated definitions, denominators and drill-down to the records; CSV export |
 | **Team & approvals** | Approval queue, monthly targets, performance shown with workload |
 | **Settings** | People and access, approval policy, quotation defaults, reminders, regions, factories, assignment rules, dropdowns, imports, backups, audit log |
 
 ## Quick start
 
-Requires **Node.js 22.13+** (the database is the built-in `node:sqlite` — nothing to compile).
+Requires **Node.js 22.13+**. The database is PostgreSQL: Google Cloud SQL in production, and an embedded
+PostgreSQL (PGlite) in `data/pgdata` locally — nothing else to install. Production runs on Google Cloud Run;
+see [docs/deploy-google-cloud.md](docs/deploy-google-cloud.md).
 
 ```bash
 npm install
 npm run dev          # API on :4000 and the web app on :5173 → open http://localhost:5173
 ```
 
-On first start the server creates `data/veritek.sqlite` and fills it with dated demo data (customers,
+On first start the server creates the embedded database in `data/pgdata` and fills it with dated demo data (customers,
 enquiries, quotations, orders, dispatches, invoices, complaints, objects). Rebuild it at any time with:
 
 ```bash
@@ -62,13 +65,15 @@ npm run build && npm start   # http://localhost:4000
 | `npm run dev` | API with `--watch` plus the Vite dev server |
 | `npm run build` | Builds the React app into `client/dist` |
 | `npm start` | Serves the API and the built app on one port |
-| `npm run seed` | Drops and rebuilds the demo database |
-| `npm test` | Seeds a throwaway database and runs the acceptance journey (82 checks) and the Objects & QR suite |
-| `npm run snapshot` | Rebuilds `seed/veritek-seed.sqlite` + `seed/files`, the demo data shipped with a serverless deployment |
-| `npm run backup` | Backs up the database and all documents with a checksummed manifest |
-| `npm run restore-test` | Restores the latest backup in isolation and reconciles records, files and quantities |
+| `npm run seed` | Drops and rebuilds the demo database (refuses if it holds real accounts) |
+| `npm test` | Seeds a throwaway database and runs the acceptance journey (82 checks), the Objects & QR suite, the customer-to-dispatch flow (57 checks) and a sweep of every endpoint, then checks a clean installation |
+| `npm run snapshot` | Rebuilds `seed/veritek-demo.tar.gz` + `seed/files`, the demo data shipped with a serverless deployment |
+| `npm run backup` | Backs up every table and the documents with a checksummed manifest |
+| `npm run restore-test` | Reads the latest backup back and reconciles records, files and quantities |
+| `npm run restore -- <backup>` | Restores a backup into an empty database |
 
-For a real installation start with an empty database: `CRM_NO_DEMO=1 CRM_ADMIN_EMAIL=… npm start` —
+For a real installation start without demo data: `CRM_NO_DEMO=1 CRM_ADMIN_EMAIL=… npm start` gives the
+product models (prices blank), sales regions, settings and one administrator, and nothing else —
 see [docs/setup.md](docs/setup.md).
 
 ## Demo accounts
@@ -105,7 +110,7 @@ server/            Express 5 API
   access.js        Record scope and value redaction for every response
 shared/            Constants, permissions, dates and rules used by both server and client
 scripts/           dev runner, demo snapshot, backup / restore test
-tests/             End-to-end acceptance journey and Objects & QR suite
+tests/             Acceptance journey, customer-to-dispatch flow, Objects & QR suite, endpoint sweep, clean installation
 docs/              Delivery pack (setup, configuration, permissions, imports, backup, guides)
 api/index.js       Serverless entry (Vercel) — demo use; data resets on cold start
 ```

@@ -361,7 +361,7 @@ function ruleSummaries() {
     };
   };
   const save = (period, key, data, title) => {
-    const res = run('INSERT OR IGNORE INTO summaries (period, period_key, data, created_at) VALUES (?, ?, ?, ?)', period, key, JSON.stringify(data), nowIso());
+    const res = run('INSERT INTO summaries (period, period_key, data, created_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING', period, key, JSON.stringify(data), nowIso());
     if (Number(res.changes)) {
       made.push(`${period}:${key}`);
       for (const u of all("SELECT id FROM users WHERE role IN ('management','super_admin','sales_head','viewer') AND active = 1 AND login_enabled = 1")) {

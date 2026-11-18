@@ -10,8 +10,7 @@ import {
   Badge, Button, Card, ErrorState, Field, Input, Modal, Notice, PageHeader, Popover, SaveStatus, Select, Spinner, Tabs, Facts, Checkbox, useToast, useConfirm, Textarea,
 } from '../components/ui.jsx';
 import {
-  LineStateBadge, CommBadge, PhaseLabel, OutcomeBadges, JourneyStepper, Attachments, DueBadge, PinButton, Money, DateField, ProductSelect, useOptionLabel, FilePick, UserSelect, useMeta,
-} from '../components/domain.jsx';
+  LineStateBadge, CommBadge, PhaseLabel, OutcomeBadges, JourneyStepper, Attachments, DueBadge, PinButton, Money, DateField, ProductSelect, useOptionLabel, FilePick, UserSelect, useMeta, JourneyCard, PaymentBadge } from '../components/domain.jsx';
 import { ProductionUpdateForm, CommunicationForm, DispatchForm, CancelQtyForm, FollowupForm } from '../components/forms.jsx';
 import { summariseChanges } from './orderText.js';
 
@@ -57,6 +56,7 @@ export default function OrderDetail() {
           {s.active && (s.overdue ? <LineStateBadge state="overdue" daysLate={Math.max(...lines.map((l) => l.status.daysLate || 0))} /> : s.at_risk ? <LineStateBadge state="at_risk" /> : null)}
           {s.active && <OutcomeBadges outcome={s.outcome} size="sm" />}
           {pendingComm > 0 && <CommBadge state="pending" />}
+          <PaymentBadge payment={data.payment} size="md" />
           {o.priority && o.priority !== 'normal' && <Badge tone={toneOf(PRIORITIES, o.priority)} icon="flag">{labelOf(PRIORITIES, o.priority)} priority</Badge>}</>}
         title={<>{o.code} · {can('customers.view') ? <Link to={`/customers/${o.customer_id}`}>{o.customer_name}</Link> : o.customer_name}{first ? ` · ${qty(first.confirmed_qty, first.unit)} × ${first.product}${lines.length > 1 ? ` +${lines.length - 1}` : ''}` : ''}</>}
         subtitle={<>PO {o.po_reference || '—'} · received {o.received_unknown ? 'date unknown' : date(o.received_date, { year: true })} · owner {o.owner_name}{o.coordinator_name ? ` · coordinator ${o.coordinator_name}` : ''}</>}
@@ -82,6 +82,7 @@ export default function OrderDetail() {
           )}
         </>}
       />
+      <JourneyCard orderId={o.id} version={o.version} />
       {data.holds.filter((h) => !h.released_at).map((h) => (
         <Notice key={h.id} tone="warn" title="Payment hold" action={can('finance.holds') && <Button size="sm" onClick={() => setModal({ type: 'release', hold: h })}>Release</Button>}>{h.reason} · authorised by {h.authorised_by_name} on {date(h.held_at)}</Notice>
       ))}
@@ -132,12 +133,6 @@ export default function OrderDetail() {
             </div>
           </Card>
           {data.finance && can('values.view') && <FinanceCard order={o} finance={data.finance} />}
-          {(data.objects?.length > 0 || can('objects.edit')) && (
-            <Card title="Equipment & QR" sub={data.objects?.length ? `${data.objects.length}` : undefined} actions={can('objects.edit') && <Button size="sm" variant="ghost" icon="plus" to="/objects">Objects</Button>}>
-              {!data.objects?.length && <div className="muted small">No QR objects linked. Link an object (machine, panel, meter) to this order from its object page.</div>}
-              <div className="stack-xs">{data.objects?.map((x) => <Link key={x.id} to={`/objects/${x.id}`} className="small"><span className="mono">{x.public_id}</span> · {x.name}{x.serial_number ? ` · SN ${x.serial_number}` : ''}</Link>)}</div>
-            </Card>
-          )}
           {data.complaints?.length > 0 && (
             <Card title="Complaints on this order">
               <div className="stack-xs">{data.complaints.map((k) => <Link key={k.id} to={`/complaints/${k.id}`} className="small"><strong>{k.code}</strong> · {k.category} · {k.status.replace(/_/g, ' ')} · {date(k.received_date)}</Link>)}</div>

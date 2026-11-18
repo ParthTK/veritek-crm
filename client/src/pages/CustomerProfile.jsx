@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { labelOf, toneOf, ENQUIRY_STAGES, COUNTRIES, SEGMENTS, PHASES, VALUE_CATEGORIES, INDUSTRIES, CURRENCIES, CONTACT_ROLES } from '@shared/constants.js';
+import { labelOf, toneOf, ENQUIRY_STAGES, COUNTRIES, SEGMENTS, PHASES, VALUE_CATEGORIES, INDUSTRIES, CURRENCIES, CONTACT_ROLES, VISIT_OUTCOMES } from '@shared/constants.js';
 import { fromMinor } from '@shared/rules.js';
 import { api } from '../api.js';
 import { useAuth } from '../auth.jsx';
@@ -10,8 +10,7 @@ import {
   Badge, Button, Card, Chips, DataTable, ErrorState, Facts, Field, Input, Modal, Notice, PageHeader, SaveStatus, Spinner, Tabs, Checkbox, Select, Textarea, useToast, Combobox,
 } from '../components/ui.jsx';
 import {
-  HealthLabels, LineStateBadge, OutcomeBadges, CommBadge, DueBadge, StageBadge, Timeline, TIMELINE_FILTERS, Attachments, PinButton, UserSelect, CountrySelect, useOptions, Money, ReactivationBadge, QuoteBadge, useMeta,
-} from '../components/domain.jsx';
+  HealthLabels, LineStateBadge, OutcomeBadges, CommBadge, DueBadge, StageBadge, Timeline, TIMELINE_FILTERS, Attachments, PinButton, UserSelect, CountrySelect, useOptions, Money, ReactivationBadge, QuoteBadge, useMeta, DealReasons, PaymentBadge } from '../components/domain.jsx';
 import { FollowupForm } from '../components/forms.jsx';
 import { useQuickEntry } from '../components/QuickEntry.jsx';
 import Icon from '../components/Icon.jsx';
@@ -48,7 +47,7 @@ export default function CustomerProfile() {
         eyebrow={<><HealthLabels labels={health} />{c.value_category && <Badge tone={toneOf(VALUE_CATEGORIES, c.value_category)}>{c.value_category_label}</Badge>}{c.credit_hold ? <Badge tone="red" icon="ban">Credit hold{c.credit_hold_reason ? `: ${c.credit_hold_reason}` : ''}</Badge> : null}{c.tags?.map((t) => <span key={t.id} className="tag">{t.name}</span>)}</>}
         actions={<>
           <PinButton type="customer" id={c.id} pinned={data.pinned} onChange={reload} />
-          {can('enquiries.edit') && !c.merged_into_id && <Button icon="plus" onClick={() => quick.open('enquiry')}>New enquiry</Button>}
+          {can('enquiries.edit') && !c.merged_into_id && <Button icon="plus" onClick={() => quick.open('enquiry', { customer: { id: c.id, company_name: c.company_name } })}>New enquiry</Button>}
           {can('quotes.edit') && !c.merged_into_id && <Button icon="quotation" to={`/quotations/new?customer_id=${c.id}`}>New quotation</Button>}
           {next ? <Button variant="cta" icon="calendar" onClick={() => openNext().catch((e) => toast.error(e.message))}>Next action: {next.purpose} · <DueBadge task={next} /></Button>
             : can('tasks.edit') && <Button variant="cta" icon="plus" onClick={() => setModal({ type: 'new_task' })}>Set next action</Button>}
@@ -66,6 +65,7 @@ export default function CustomerProfile() {
         <span className="muted"> · Late means dispatched after the original committed date — not late delivery.</span>
       </div></div>
 
+      {(can('enquiries.view') || can('orders.view')) && <CustomerDeals customerId={c.id} />}
       <Tabs value={tab} onChange={setTab} tabs={[
         { key: 'history', label: 'History' },
         { key: 'enquiries', label: 'Enquiries', count: data.enquiries.length },
@@ -76,7 +76,7 @@ export default function CustomerProfile() {
         { key: 'documents', label: 'Documents', count: data.documents.length },
         can('finance.view') && { key: 'payments', label: 'Payments' },
         can('complaints.view') && { key: 'complaints', label: 'Complaints', count: data.complaints?.length || null },
-        can('objects.view') && { key: 'objects', label: 'Equipment & QR', count: data.objects?.length || null },
+        { key: 'exhibitions', label: 'Exhibitions', count: data.exhibition_visits?.length || null },
         { key: 'details', label: 'Contacts & details' },
       ]} />
 
@@ -140,13 +140,13 @@ export default function CustomerProfile() {
         { key: 'sent', label: 'Sent', render: (q) => (q.sent_at ? date(q.sent_at) : <span className="muted">Not sent</span>) },
         { key: 'valid', label: 'Valid until', render: (q) => date(q.validity_date) },
       ]} empty={<div className="empty small">No quotations yet.</div>} /></Card>}
-      {tab === 'objects' && <Card flush title="Equipment & QR codes" sub="objects linked to this customer" actions={can('objects.edit') && <Button size="sm" to="/objects">Objects & QR</Button>}><DataTable rows={data.objects} onRowClick={(o) => window.location.assign(`/objects/${o.id}`)} columns={[
-        { key: 'id', label: 'Object ID', render: (o) => <span className="mono">{o.public_id}</span> },
-        { key: 'n', label: 'Name', render: (o) => <Link to={`/objects/${o.id}`}>{o.name}</Link> },
-        { key: 'sn', label: 'Serial', render: (o) => o.serial_number || '—' },
-        { key: 'sc', label: 'Scans', align: 'num', render: (o) => o.scan_count || 0 },
-        { key: 'st', label: 'Status', render: (o) => <Badge size="sm" tone={o.status === 'active' ? 'green' : 'slate'}>{o.status}</Badge> },
-      ]} empty={<div className="empty small">No objects linked. Link a machine or panel to this customer from its object page.</div>} /></Card>}
+      {tab === 'exhibitions' && <Card flush title="Exhibitions visited"><DataTable rows={data.exhibition_visits} columns={[
+        { key: 'x', label: 'Exhibition', render: (v) => <Link to={`/campaigns/${v.campaign_id}`} className="strong">{v.exhibition}</Link> },
+        { key: 'd', label: 'Visited', render: (v) => date(v.visited_on) },
+        { key: 'i', label: 'Interested in / notes', render: (v) => <span className="small">{v.interest || '—'}{v.notes && <div className="tiny muted">{v.notes}</div>}</span> },
+        { key: 'm', label: 'Met by', render: (v) => v.met_by_name || '—' },
+        { key: 'o', label: 'Outcome', render: (v) => (v.enquiry_id ? <Link to={`/enquiries/${v.enquiry_id}`}><Badge size="sm" tone="green">{v.enquiry_code}</Badge></Link> : <Badge size="sm" tone={toneOf(VISIT_OUTCOMES, v.outcome)}>{labelOf(VISIT_OUTCOMES, v.outcome)}</Badge>) },
+      ]} empty={<div className="empty small">No exhibition visits recorded.</div>} /></Card>}
       {tab === 'orders' && <OrdersTab customerId={c.id} />}
       {tab === 'activities' && <ActivitiesTab customerId={c.id} />}
       {tab === 'tasks' && <TasksTab customerId={c.id} />}
@@ -420,3 +420,20 @@ function NewTaskForm({ customerId, ownerId, onSaved }) {
 }
 
 export { dateTime, pct, COUNTRIES, ENQUIRY_STAGES };
+
+/** This customer's live deals: where each one is in the journey and what is holding it up. */
+function CustomerDeals({ customerId }) {
+  const { data } = useApi('/pipeline', { customer_id: customerId });
+  if (!data?.items?.length) return null;
+  return (
+    <Card title="Deals in progress" sub={`${data.items.length}${data.stuck ? ` · ${data.stuck} stuck` : ''}`} flush actions={<Button size="sm" variant="ghost" to="/pipeline">Open pipeline</Button>}>
+      <DataTable rows={data.items} rowKey="key" compact onRowClick={(d) => window.location.assign(d.link)} columns={[
+        { key: 'c', label: 'Deal', render: (d) => <><strong>{d.code}</strong><div className="sub">{d.title}</div></> },
+        { key: 's', label: 'Stage', render: (d) => <span className="small strong">{d.stage_label}</span> },
+        { key: 'w', label: 'Why it is stuck', render: (d) => (d.stuck ? <DealReasons deal={{ ...d, reasons: d.reasons.filter((r) => r.severity !== 'info') }} limit={1} /> : <span className="muted small">Moving</span>) },
+        { key: 'p', label: 'Payment', render: (d) => <PaymentBadge payment={d.payment} /> },
+        { key: 'o', label: 'Owner', render: (d) => <span className="small">{d.owner_name}</span> },
+      ]} />
+    </Card>
+  );
+}

@@ -9,6 +9,7 @@ import { ENQUIRY_STAGES, OPEN_ENQUIRY_STAGES, PIPELINE_STAGES, TEMPERATURES, CUR
 import { round3, toMinor } from '../../shared/rules.js';
 import { enquiryScope, assertCustomer } from '../access.js';
 import { requireActiveUser } from './people.js';
+import { linkVisitToEnquiry } from './campaigns.js';
 import { createCustomer } from './customers.js';
 import { createTask, cancelOpenTasksFor, tasksWhere, activitiesWhere, validateTaskInput, decorateTask, TASK_COLUMNS } from './tasks.js';
 import { linkAttachment, attachmentsFor } from './attachments.js';
@@ -125,7 +126,15 @@ export function defaultOwnerFor(customerId, lines = []) {
  * Single-page capture. Unknown quantities and unspecified products are allowed; the system fills in the
  * enquiry number, entry time, customer history link, initial status and the first follow-up task.
  */
-export function createEnquiry(input, user, { importBatchId = null, sourceConfidence = null, allowUnknownReceived = false } = {}) {
+/** An enquiry that came from an exhibition must name the exhibition, so it counts towards that event. */
+function checkExhibitionLink(c, sourceCode, campaignId) {
+  if (sourceCode !== 'exhibition') return;
+  const campaign = campaignId ? get('SELECT type FROM campaigns WHERE id = ?', campaignId) : null;
+  if (!campaign) c.fail('campaign_id', 'Choose the exhibition this enquiry came from');
+  else if (campaign.type !== 'exhibition') c.fail('campaign_id', 'Choose an exhibition');
+}
+
+export function createEnquiry(input, user, { importBatchId = null, sourceConfidence = null, allowUnknownReceived = false, requireExhibitionLink = false } = {}) {
   const c = new Check();
   let customerId = intId(input.customer_id);
   if (!customerId && !input.new_customer) c.fail('customer_id', 'Find the customer, or add a new company');
@@ -144,6 +153,7 @@ export function createEnquiry(input, user, { importBatchId = null, sourceConfide
     || (user.group === 'sales' ? user.id : null);
   requireActiveUser(c, 'owner_id', ownerId, 'Owner');
   const opp = opportunityFields(c, input);
+  if (requireExhibitionLink) checkExhibitionLink(c, input.source_code, opp.campaign_id);
   if (opp.campaign_id && !input.source_event) opp.source_event = get('SELECT name FROM campaigns WHERE id = ?', opp.campaign_id)?.name ?? null;
   c.note('requirement_note', input.requirement_note);
   const unknownReceived = allowUnknownReceived && bool(input.received_unknown);
@@ -206,6 +216,7 @@ export function createEnquiry(input, user, { importBatchId = null, sourceConfide
     for (const aid of input.attachment_ids || []) linkAttachment(intId(aid), 'enquiry', id, user);
     history('enquiry', id, 'created', { customerId, occurredAt: receivedAt, data: { source: input.source_code, lines: lines.length } });
     audit('enquiry', id, 'create', { customer_id: customerId, owner_id: ownerId, source: input.source_code, lines: lines.length, received_at: receivedAt });
+    if (opp.campaign_id) linkVisitToEnquiry({ campaignId: opp.campaign_id, customerId, contactId, enquiryId: id, receivedAt: receivedAt || stamp }, user);
     return { id, customer_id: customerId, task_id: taskId };
   });
 }
@@ -326,7 +337,8 @@ export function listEnquiries(query, user) {
     where.push(ids.length ? `e.id IN (${placeholders(ids)})` : '1 = 0');
     params.push(...ids);
   }
-  if (bool(query.no_response)) where.push('e.first_response_at IS NULL');
+  if (bool(query.no_response) || query.reply === 'unreplied') where.push('e.first_response_at IS NULL');
+  if (query.reply === 'replied') where.push('e.first_response_at IS NOT NULL');
   if (bool(query.no_next)) where.push("NOT EXISTS (SELECT 1 FROM tasks t WHERE t.enquiry_id = e.id AND t.status = 'open') AND e.no_followup_reason IS NULL");
   if (query.q) {
     where.push('(e.code LIKE ? OR c.company_name LIKE ? OR e.requirement_note LIKE ? OR EXISTS (SELECT 1 FROM enquiry_lines el LEFT JOIN products p ON p.id = el.product_id WHERE el.enquiry_id = e.id AND (p.code LIKE ? OR el.requirement LIKE ?)))');
@@ -355,6 +367,8 @@ export function listEnquiries(query, user) {
   const taskIds = rows.map((r) => r.next_task_id).filter(Boolean);
   const tasks = taskIds.length ? Object.fromEntries(all(`SELECT ${TASK_COLUMNS} FROM tasks t JOIN users u ON u.id = t.owner_id LEFT JOIN customers c ON c.id = t.customer_id
     LEFT JOIN enquiries e ON e.id = t.enquiry_id LEFT JOIN orders o ON o.id = t.order_id WHERE t.id IN (${placeholders(taskIds)})`, taskIds).map((t) => [t.id, decorateTask(t)])) : {};
+  const replyCounts = get(`SELECT COALESCE(SUM(CASE WHEN e.first_response_at IS NULL THEN 0 ELSE 1 END), 0) AS replied, COALESCE(SUM(CASE WHEN e.first_response_at IS NULL THEN 1 ELSE 0 END), 0) AS unreplied
+    FROM enquiries e JOIN customers c ON c.id = e.customer_id WHERE e.stage IN (${OPEN_ENQUIRY_STAGES.map((s) => `'${s}'`).join(',')}) ${scope ? `AND ${scope}` : ''}`);
   const stageCounts = Object.fromEntries(all(`SELECT e.stage, COUNT(*) AS n FROM enquiries e JOIN customers c ON c.id = e.customer_id ${scope ? `WHERE ${scope}` : ''} GROUP BY e.stage`).map((r) => [r.stage, r.n]));
   return {
     rows: rows.map((r) => ({
@@ -368,11 +382,12 @@ export function listEnquiries(query, user) {
     page,
     pageSize,
     stage_counts: stageCounts,
+    reply_counts: replyCounts,
   };
 }
 
 // ------------------------------------------------------------------ update
-export function updateEnquiry(id, input, user) {
+export function updateEnquiry(id, input, user, { requireExhibitionLink = false } = {}) {
   const e = get('SELECT * FROM enquiries WHERE id = ?', id);
   if (!e) throw notFound('Enquiry');
   const c = new Check();
@@ -395,6 +410,9 @@ export function updateEnquiry(id, input, user) {
     next.requirement_note = str(input.requirement_note, 1000);
   }
   Object.assign(next, opportunityFields(c, input, e));
+  const sourceChanged = next.source_code !== undefined && next.source_code !== e.source_code;
+  const campaignChanged = next.campaign_id !== undefined && next.campaign_id !== e.campaign_id;
+  if (requireExhibitionLink && (sourceChanged || campaignChanged)) checkExhibitionLink(c, next.source_code ?? e.source_code, next.campaign_id !== undefined ? next.campaign_id : e.campaign_id);
   let lines = null;
   if (input.lines !== undefined) {
     if (!isOpen(e.stage)) c.fail('lines', 'Reopen the enquiry before changing its lines');
@@ -424,6 +442,7 @@ export function updateEnquiry(id, input, user) {
       if (!Object.keys(next).length) run('UPDATE enquiries SET version = version + 1, updated_at = ? WHERE id = ?', stamp, id);
       changes.lines = ['updated', `${lines.length} line(s)`];
     }
+    if (campaignChanged && next.campaign_id) linkVisitToEnquiry({ campaignId: next.campaign_id, customerId: e.customer_id, contactId: e.contact_id, enquiryId: id, receivedAt: e.received_at || nowIso() }, user);
     if (changes.owner_id) history('enquiry', id, 'owner_changed', { customerId: e.customer_id, data: { from: changes.owner_id[0], to: changes.owner_id[1] } });
     if (Object.keys(changes).length) audit('enquiry', id, 'update', changes);
     return { id };
@@ -573,6 +592,10 @@ export function changeStage(id, input, user) {
         });
       }
       cancelOpenTasksFor('enquiry_id', id, to === 'lost' ? 'Enquiry closed as lost' : 'Enquiry cancelled', user);
+      // A quotation still waiting on the customer ends with its enquiry; it must not stay "sent" for ever.
+      run(`UPDATE quote_revisions SET status = 'rejected', decided_at = ?, rejection_reason_code = ?, decision_note = ?, updated_at = ?, version = version + 1
+        WHERE status = 'issued' AND quotation_id IN (SELECT id FROM quotations WHERE enquiry_id = ?)`, nowIso(), to === 'lost' ? input.lost_reason_code : null,
+      str(input.lost_note || input.cancel_note, 1000) || (to === 'lost' ? 'Enquiry closed as lost' : 'Enquiry cancelled'), nowIso(), id);
       if (to === 'lost' && input.lost_reason_code === 'unknown') {
         // An unknown reason prompts a feedback task rather than a guessed explanation.
         createTask({

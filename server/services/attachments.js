@@ -1,9 +1,9 @@
 // Private document storage: random storage keys (never user-controlled paths), type allow-list with
 // content sniffing, size limits, checksums, reuse by reference and short-lived signed download links.
 import crypto from 'node:crypto';
-import fs from 'node:fs';
 import path from 'node:path';
-import { all, get, insert, run, FILE_DIR } from '../db.js';
+import { all, get, insert, run } from '../db.js';
+import { putFile, getFile } from '../storage.js';
 import { badRequest, forbidden, notFound, nowIso, sha256, token, audit, installSecret } from '../util.js';
 import { assertCustomer, assertEnquiry, assertOrder } from '../access.js';
 import { hasPerm } from '../auth.js';
@@ -143,11 +143,11 @@ export function storeAttachment({ buffer, name, entityType, entityId, descriptio
   const checksum = sha256(buffer);
   const customerId = entityType ? customerOf(entityType, entityId) : null;
   // Identical file already stored for this customer: reuse it by reference instead of a second copy.
-  const existing = get('SELECT * FROM attachments WHERE checksum = ? AND (customer_id IS ? OR customer_id = ?) LIMIT 1', checksum, customerId, customerId);
+  const existing = get('SELECT * FROM attachments WHERE checksum = ? AND customer_id IS ? LIMIT 1', checksum, customerId);
   let id = existing?.id;
   if (!id) {
     const storageKey = `${Date.now().toString(36)}-${token(12)}`;
-    fs.writeFileSync(path.join(FILE_DIR, storageKey), buffer, { flag: 'wx' });
+    putFile(storageKey, buffer, { contentType: mime });
     id = insert('attachments', {
       storage_key: storageKey, original_name: original, mime, size: buffer.length, checksum, customer_id: customerId,
       visibility, scan_status: 'basic_checks_passed', description: description || null, uploaded_by: user.id, uploaded_at: nowIso(),
@@ -160,7 +160,7 @@ export function storeAttachment({ buffer, name, entityType, entityId, descriptio
 
 export function linkAttachment(attachmentId, entityType, entityId, user) {
   if (!attachmentId || !entityType || !entityId) return;
-  run('INSERT OR IGNORE INTO attachment_links (attachment_id, entity_type, entity_id, linked_by, linked_at) VALUES (?, ?, ?, ?, ?)', attachmentId, entityType, entityId, user?.id ?? null, nowIso());
+  run('INSERT INTO attachment_links (attachment_id, entity_type, entity_id, linked_by, linked_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING', attachmentId, entityType, entityId, user?.id ?? null, nowIso());
 }
 
 export function attachmentsFor(entityType, entityId) {
@@ -206,7 +206,7 @@ export function verifyFileSignature(id, userId, exp, sig) {
 }
 
 export function readAttachmentFile(attachment) {
-  const p = path.join(FILE_DIR, attachment.storage_key);
-  if (!fs.existsSync(p)) throw notFound('Stored file');
-  return fs.readFileSync(p);
+  const data = getFile(attachment.storage_key);
+  if (!data) throw notFound('Stored file');
+  return data;
 }

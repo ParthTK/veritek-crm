@@ -9,7 +9,7 @@ import { api, openFile, uploadFile } from '../api.js';
 import { useAuth } from '../auth.jsx';
 import { date, dateTime, relDay, setZone, todayLocal, fileSize, money } from '../lib/format.js';
 import Icon, { CHANNEL_ICON } from './Icon.jsx';
-import { Badge, Button, Combobox, Field, Input, Select, Spinner, useToast, Notice, Checkbox } from './ui.jsx';
+import { Badge, Button, Combobox, Field, Input, Select, Spinner, useToast, Notice, Checkbox, Card } from './ui.jsx';
 
 // ------------------------------------------------------------------ reference data
 const MetaContext = createContext(null);
@@ -158,11 +158,75 @@ export function HealthLabels({ labels = [] }) {
   return <span className="row wrap" style={{ gap: 6 }}>{labels.map((l) => <Badge key={l.code} tone={l.tone}>{l.label}</Badge>)}</span>;
 }
 
-export function Money({ minor, currency }) {
+/** A money value. `empty` replaces "Unknown" where a blank means "not filled in yet" (e.g. the price list). */
+export function Money({ minor, currency, empty }) {
   const { user } = useAuth();
   if (!user?.permissions.includes('values.view')) return <span className="muted small" title="Commercial values are hidden for your role">Hidden</span>;
-  if (minor === null || minor === undefined) return <span className="muted" title="Price not recorded — not zero">Unknown</span>;
+  if (minor === null || minor === undefined) return empty ? <span className="muted">{empty}</span> : <span className="muted" title="Price not recorded — not zero">Unknown</span>;
   return <span className="num">{money(minor, currency)}</span>;
+}
+
+/** One plain payment status for an order. */
+export function PaymentBadge({ payment, size = 'sm' }) {
+  if (!payment) return null;
+  return <Badge size={size} tone={payment.tone} title={payment.hold_reason || undefined}>{payment.label}</Badge>;
+}
+
+export function ReplyBadge({ replied, size = 'sm' }) {
+  return <Badge size={size} tone={replied ? 'green' : 'red'}>{replied ? 'Replied' : 'Not replied'}</Badge>;
+}
+
+/** Enquiry → quotation → confirmation → payment → production → dispatch, showing where this deal is now. */
+export function SalesJourney({ deal }) {
+  return (
+    <div className="journey sales" aria-label={`Sales journey: now at ${deal.stage_label}`}>
+      {deal.steps.map((s) => {
+        const cls = s.state === 'done' ? 'done' : s.state === 'current' ? `current ${deal.severity === 'red' ? 'stuck' : deal.severity === 'amber' ? 'hold' : ''}` : s.state === 'closed' ? 'current hold' : '';
+        return (
+          <div key={s.key} className={`step ${cls}`}>
+            <span className="node">{s.state === 'done' && <Icon name="check" size={14} strokeWidth={3} />}</span>
+            <span className="strong">{s.label}</span>
+            {s.detail && <span className="tiny muted">{s.link ? <Link to={s.link}>{s.detail}</Link> : s.detail}</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Why a deal is stuck, worst first. */
+export function DealReasons({ deal, limit }) {
+  const shown = limit ? deal.reasons.slice(0, limit) : deal.reasons;
+  return (
+    <ul className="reasons">
+      {shown.map((r) => <li key={r.text} className={r.severity}>{r.text}</li>)}
+      {limit && deal.reasons.length > limit && <li className="info">+{deal.reasons.length - limit} more</li>}
+    </ul>
+  );
+}
+
+/** The journey of one enquiry, quotation or order, shown at the top of its page. */
+export function JourneyCard({ enquiryId, quotationId, orderId, version }) {
+  const [deal, setDeal] = useState(null);
+  useEffect(() => {
+    let live = true;
+    const load = () => api.get('/pipeline/journey', { enquiry_id: enquiryId, quotation_id: quotationId, order_id: orderId }).then((r) => { if (live) setDeal(r.journey); }, () => { if (live) setDeal(null); });
+    load();
+    window.addEventListener('data:changed', load);
+    return () => {
+      live = false;
+      window.removeEventListener('data:changed', load);
+    };
+  }, [enquiryId, quotationId, orderId, version]);
+  if (!deal) return null;
+  const blocking = deal.status === 'active' && deal.reasons.some((r) => r.severity === 'red' || r.severity === 'amber');
+  return (
+    <Card className="no-print" title="Sales journey" sub={deal.status === 'completed' ? 'completed' : deal.status === 'active' ? `at ${deal.stage_label} for ${deal.days_in_stage} day${deal.days_in_stage === 1 ? '' : 's'}` : deal.status}
+      actions={<Button size="sm" variant="ghost" to="/pipeline">Open pipeline</Button>}>
+      <SalesJourney deal={deal} />
+      {blocking && <div className="mt-8"><div className="tiny muted strong">Why it is stuck</div><DealReasons deal={deal} limit={4} /></div>}
+    </Card>
+  );
 }
 
 export function JourneyStepper({ phase, workStatus, dispatched }) {

@@ -1,9 +1,8 @@
 // Settings (restricted): users and access, dropdowns, rules, imports, audit, system health, backups and the
 // full data export. Products, finance and complaints have their own routers.
 import { Router } from 'express';
-import fs from 'node:fs';
-import path from 'node:path';
-import { all, FILE_DIR } from '../db.js';
+import { all } from '../db.js';
+import { getFile } from '../storage.js';
 import { intId, now, tz } from '../util.js';
 import { allow } from '../auth.js';
 import {
@@ -72,8 +71,8 @@ r.get('/admin/export/full.zip', allow('export.full'), (req, res, next) => {
     });
     entries.push({ name: 'users.csv', data: toCsv(['id', 'name', 'email', 'role', 'department', 'active'].map((k) => ({ key: k, label: k })), all('SELECT id, name, email, role, department, active FROM users')) });
     for (const a of all('SELECT id, storage_key, original_name FROM attachments')) {
-      const p = path.join(FILE_DIR, a.storage_key);
-      if (fs.existsSync(p)) entries.push({ name: `documents/${a.id}-${a.original_name.replace(/[^\w.\- ]+/g, '_')}`, data: fs.readFileSync(p) });
+      const data = getFile(a.storage_key);
+      if (data) entries.push({ name: `documents/${a.id}-${a.original_name.replace(/[^\w.\- ]+/g, '_')}`, data });
     }
     entries.push({ name: 'README.txt', data: `Veritek CRM full export\nGenerated ${now().toISOString()} (display zone ${tz()})\nInstants are UTC; business dates are local dates; money is integer minor units with an ISO currency.\n` });
     res.set('Content-Type', 'application/zip');

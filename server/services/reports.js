@@ -734,7 +734,7 @@ const REPORTS = {
           (SELECT COUNT(*) FROM orders o JOIN quote_revisions r3 ON r3.id = o.quote_revision_id WHERE r3.quotation_id = q.id AND o.status = 'confirmed') AS orders,
           (SELECT COUNT(*) FROM quote_revisions r4 WHERE r4.quotation_id = q.id AND r4.sent_at IS NOT NULL) AS revisions
         FROM quotations q JOIN quote_revisions r ON r.quotation_id = q.id AND r.sent_at IS NOT NULL JOIN customers c ON c.id = q.customer_id LEFT JOIN users u ON u.id = q.owner_id
-        WHERE 1 = 1 ${scope ? `AND ${scope}` : ''} ${f.owner ? `AND q.owner_id = ${f.owner}` : ''} GROUP BY q.id HAVING MIN(r.sent_at) >= ? AND MIN(r.sent_at) < ?`, f.fromUtc, f.toUtc)
+        WHERE 1 = 1 ${scope ? `AND ${scope}` : ''} ${f.owner ? `AND q.owner_id = ${f.owner}` : ''} GROUP BY q.id, c.id, u.id HAVING MIN(r.sent_at) >= ? AND MIN(r.sent_at) < ?`, f.fromUtc, f.toUtc)
         .map((r) => ({ ...r, month: localDate(new Date(r.first_sent_at), tz()).slice(0, 7), outcome: r.orders > 0 ? 'converted' : r.latest_status === 'accepted' ? 'accepted_not_converted' : r.latest_status }));
     },
     metrics: {

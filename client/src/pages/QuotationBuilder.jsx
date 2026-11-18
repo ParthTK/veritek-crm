@@ -101,7 +101,7 @@ function Builder({ existing, initialCustomerId, initialEnquiryId }) {
     validity_date: rev.validity_date || '', payment_terms: rev.payment_terms || '', delivery_terms: rev.delivery_terms || '', warranty_terms: rev.warranty_terms || '', notes: rev.notes || '', summary: rev.summary || '',
     freight: rev.freight_minor ? fromMinor(rev.freight_minor) : '', installation: rev.installation_minor ? fromMinor(rev.installation_minor) : '', change_note: rev.change_note || '',
   } : {
-    customer: null, enquiry_id: initialEnquiryId || '', contact_id: '', owner_id: user.group === 'sales' ? user.id : null, subject: '', source_code: 'existing_customer', source_event: '',
+    customer: null, enquiry_id: initialEnquiryId || '', contact_id: '', owner_id: user.group === 'sales' ? user.id : null, subject: '', source_code: 'existing_customer', source_event: '', campaign_id: '',
     price_list: '', currency: '', validity_date: addDays(todayLocal(), qs.defaultValidityDays || 30), payment_terms: qs.defaultPaymentTerms || '', delivery_terms: qs.defaultDelivery || '',
     warranty_terms: qs.defaultWarranty || '', notes: '', summary: '', freight: '', installation: '', change_note: '',
   }));
@@ -200,7 +200,7 @@ function Builder({ existing, initialCustomerId, initialEnquiryId }) {
 
   const body = () => ({
     customer_id: customerId, enquiry_id: header.enquiry_id || undefined, contact_id: header.contact_id || undefined, owner_id: header.owner_id || undefined, subject: header.subject,
-    source_code: header.enquiry_id ? undefined : header.source_code, source_event: header.enquiry_id ? undefined : header.source_event,
+    source_code: header.enquiry_id ? undefined : header.source_code, source_event: header.enquiry_id ? undefined : header.source_event, campaign_id: header.enquiry_id ? undefined : header.campaign_id || undefined,
     price_list: header.price_list || priceList, currency: header.currency || currency, validity_date: header.validity_date || undefined,
     payment_terms: header.payment_terms, delivery_terms: header.delivery_terms, warranty_terms: header.warranty_terms, notes: header.notes, summary: header.summary,
     freight: header.freight, installation: header.installation, lines: sent.map(toPayload),
@@ -262,7 +262,9 @@ function Builder({ existing, initialCustomerId, initialEnquiryId }) {
               {!editing && customerId && !header.enquiry_id && (
                 <>
                   <Field label="Source" required error={save.fields.source_code}><OptionSelect category="enquiry_source" value={header.source_code} onChange={(v) => setH({ source_code: v })} /></Field>
-                  <Field label="Source detail" optional error={save.fields.source_event}><Input value={header.source_event} onChange={(e) => setH({ source_event: e.target.value })} placeholder="e.g. event name or referrer" /></Field>
+                  {header.source_code === 'exhibition' ? (
+                    <Field label="Exhibition" required error={save.fields.campaign_id}><Select value={header.campaign_id} onChange={(e) => setH({ campaign_id: e.target.value })} placeholder="Choose the exhibition" options={meta.campaigns.filter((c) => c.type === 'exhibition').map((c) => ({ value: String(c.id), label: c.name }))} /></Field>
+                  ) : <Field label="Source detail" optional error={save.fields.source_event}><Input value={header.source_event} onChange={(e) => setH({ source_event: e.target.value })} placeholder="e.g. event name or referrer" /></Field>}
                 </>
               )}
               <Field label="Contact person">

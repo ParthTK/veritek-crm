@@ -1,33 +1,40 @@
-// Builds the demo snapshot shipped with a serverless deployment: seed/veritek-seed.sqlite plus the demo
-// documents in seed/files. On a cold start the server copies both into its temporary data folder.
-// Run it whenever you want the demo data refreshed (the data is dated relative to the day it was generated).
+// Builds the demo snapshot shipped with a serverless deployment: seed/veritek-demo.tar.gz (a PGlite data
+// folder) plus the demo documents in seed/files. On a cold start the server restores both into its temporary
+// data folder. Run it whenever you want the demo data refreshed (the data is dated relative to the day it was
+// generated).
 import { spawnSync } from 'node:child_process';
-import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const outDb = path.join(root, 'seed', 'veritek-seed.sqlite');
+const outDb = path.join(root, 'seed', 'veritek-demo.tar.gz');
 const outFiles = path.join(root, 'seed', 'files');
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'veritek-snapshot-'));
-const dbPath = path.join(work, 'veritek.sqlite');
+const env = { ...process.env, CRM_DATA_DIR: work, CRM_NO_SNAPSHOT: '1' };
+delete env.CRM_DATABASE_URL;
+delete env.PGHOST;
 
 console.log('Generating demo data…');
-const res = spawnSync(process.execPath, ['--no-warnings=ExperimentalWarning', 'server/seed.js', '--reset'], {
-  cwd: root, stdio: 'inherit', env: { ...process.env, CRM_DATA_DIR: work, CRM_DB: dbPath, CRM_NO_SNAPSHOT: '1' },
-});
+const res = spawnSync(process.execPath, ['--no-warnings=ExperimentalWarning', 'server/seed.js', '--reset'], { cwd: root, stdio: 'inherit', env });
 if (res.status !== 0) process.exit(res.status ?? 1);
 
-// Fold the write-ahead log into the main file so the snapshot is a single self-contained file.
-const db = new DatabaseSync(dbPath);
-db.exec('PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode = DELETE; VACUUM;');
-const referenced = new Set(db.prepare('SELECT storage_key FROM attachments').all().map((r) => r.storage_key));
-db.close();
-
+// Dump the data folder and list the documents the database references (in a child process, so the database
+// module picks up this work folder).
 fs.mkdirSync(path.dirname(outDb), { recursive: true });
-fs.copyFileSync(dbPath, outDb);
+const dump = spawnSync(process.execPath, ['--no-warnings=ExperimentalWarning', '--input-type=module', '-e', `
+  const db = await import(${JSON.stringify(new URL('../server/db.js', import.meta.url).href)});
+  const keys = db.all('SELECT storage_key FROM attachments').map((r) => r.storage_key);
+  db.dumpDatabase(${JSON.stringify(outDb)});
+  db.closeDb();
+  process.stdout.write(JSON.stringify(keys));
+`], { cwd: root, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+if (dump.status !== 0) {
+  console.error(dump.stderr);
+  process.exit(dump.status ?? 1);
+}
+const referenced = new Set(JSON.parse(dump.stdout.trim().split('\n').pop()));
 
 // Replace the shipped documents with exactly the ones the new database references.
 fs.rmSync(outFiles, { recursive: true, force: true });
@@ -42,4 +49,6 @@ for (const name of fs.existsSync(srcFiles) ? fs.readdirSync(srcFiles) : []) {
   bytes += fs.statSync(path.join(outFiles, name)).size;
 }
 fs.rmSync(work, { recursive: true, force: true });
-console.log(`Snapshot written to seed/veritek-seed.sqlite (${(fs.statSync(outDb).size / 1024 / 1024).toFixed(1)} MB) and ${copied} document(s) to seed/files (${(bytes / 1024).toFixed(0)} KB)`);
+const old = path.join(root, 'seed', 'veritek-seed.sqlite');
+if (fs.existsSync(old)) fs.rmSync(old);
+console.log(`Snapshot written to seed/veritek-demo.tar.gz (${(fs.statSync(outDb).size / 1024 / 1024).toFixed(1)} MB) and ${copied} document(s) to seed/files (${(bytes / 1024).toFixed(0)} KB)`);

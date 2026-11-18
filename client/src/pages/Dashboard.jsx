@@ -60,7 +60,7 @@ export default function Dashboard() {
             {values && (
               <Card title="Order intake" sub={`last 12 months · ${cur}`}>
                 <ColumnChart data={d.order_trend.map((m) => ({ month: m.month, value: m.value_by_currency[cur] || 0, orders: m.orders }))} x="month" xFormat={monthLabel}
-                  series={[{ key: 'value', label: `Order value (${cur})` }]} format={fmt} />
+                  series={[{ key: 'value', label: `Order value (${cur})` }]} format={fmt} empty={`No ${cur} orders confirmed in the last 12 months`} />
                 {d.order_trend.some((m) => Object.keys(m.value_by_currency).some((c) => c !== cur)) && <div className="tiny muted">Export orders in other currencies are counted in the totals above, not in this chart.</div>}
               </Card>
             )}
@@ -86,7 +86,7 @@ export default function Dashboard() {
             )}
             {d.enquiry_sources && (
               <Card title="Where enquiries came from" sub="received in the period">
-                <BarChartH data={Object.entries(d.enquiry_sources).map(([k, n]) => ({ source: optionLabel('enquiry_source', k) || k, n })).sort((a, b) => b.n - a.n)} label="source" series={[{ key: 'n', label: 'Enquiries' }]} format="number" limit={10} />
+                <BarChartH data={Object.entries(d.enquiry_sources).map(([k, n]) => ({ source: optionLabel('enquiry_source', k) || k, n })).sort((a, b) => b.n - a.n)} label="source" series={[{ key: 'n', label: 'Enquiries' }]} format="number" limit={10} empty="No enquiries received in this period" />
               </Card>
             )}
           </div>

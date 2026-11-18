@@ -6,8 +6,8 @@
 npm test
 ```
 
-seeds a throwaway database in the system temp folder, starts the API on a spare port and runs two suites
-against it over HTTP — the real database is never touched.
+seeds a throwaway database in the system temp folder, starts the API on a spare port and runs the suites
+below against it over HTTP — the real database is never touched.
 
 ### Acceptance journey (`tests/journey.mjs`, 82 checks)
 
@@ -44,6 +44,17 @@ Seeding a test database in …\veritek-test-eeAayD …
 ALL 82 CHECKS PASSED
 ALL OBJECT CHECKS PASSED
 ```
+
+### Customer-to-dispatch flow (`tests/flow.mjs`, 57 checks)
+
+Customer first; exhibition, visitor and linked enquiry; replied / not replied; quotation pending, sent, approved
+and rejected; confirmation, advance, production and dispatch, with the sales pipeline, dashboard, order list and
+production board checked at each step; every stuck deal states a reason; scope and hidden values by role; QR
+data kept out of customer and order records.
+
+### Endpoint sweep (`tests/sweep.mjs`)
+
+Calls every read endpoint, report and export as several roles and fails on any server error.
 
 ## Interface checks
 

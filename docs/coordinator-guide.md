@@ -20,7 +20,7 @@ The search box (Ctrl+K) finds a company by name, phone, email, enquiry, order or
 The fastest way to record what someone tells you:
 
 - **New enquiry** — customer (search, or add with just a phone *or* email), product (or “unspecified” with a
-  short requirement), quantity if known, source (choose the campaign for exhibitions), owner, next action.
+  short requirement), quantity if known, source (if the source is Exhibition, choose which exhibition — it is required), owner, next action.
 - **Follow-up** — what happened on a call or visit, and the next action in the same step.
 - **Order update** — phase and status of a line, delay reason, expected ready and dispatch dates.
 - **Dispatch** — what actually left today, or a plan for a future date.
@@ -64,6 +64,17 @@ Most updates come from people who do not sign in. In every update form:
 - When the PO arrives: open the quotation → **Convert to order**, enter the accepted quantities (less than
   quoted is fine), PO reference and committed dispatch dates (or *Not agreed yet*). A double click cannot
   create two orders.
+
+## Sales pipeline
+
+**Sales pipeline** shows every live deal at one of six steps: enquiry, quotation, confirmation, payment,
+production, dispatch. Red and amber cards are stuck, and the card says why. Open a card for the full journey and
+links to its enquiry, quotation and order. Nothing is entered here: a deal moves when the underlying record changes.
+
+## Exhibitions
+
+Add each exhibition, then record the **customers visited** (add the customer first if they are new). **Raise
+enquiry** on a visitor starts an enquiry already linked to the exhibition.
 
 ## Customers
 

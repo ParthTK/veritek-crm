@@ -17,14 +17,15 @@ const NAV = [
     { to: '/analytics', label: 'Sales dashboard', icon: 'dashboard', perm: 'analytics.view' },
   ] },
   { group: 'Customers & sales', items: [
-    { to: '/past-customers', label: 'Past customers', icon: 'history', perm: 'past.view' },
-    { to: '/enquiries', label: 'Enquiries & pipeline', icon: 'inbox', perm: 'enquiries.view' },
-    { to: '/quotations', label: 'Quotations', icon: 'quotation', perm: 'quotes.view' },
     { to: '/customers', label: 'Customers', icon: 'users', perm: 'customers.view' },
     { to: '/contacts', label: 'Contacts', icon: 'contacts', perm: 'customers.view' },
-    { to: '/campaigns', label: 'Campaigns', icon: 'campaigns', perm: 'campaigns.view' },
+    { to: '/enquiries', label: 'Enquiries', icon: 'inbox', perm: 'enquiries.view' },
+    { to: '/quotations', label: 'Quotations', icon: 'quotation', perm: 'quotes.view' },
+    { to: '/pipeline', label: 'Sales pipeline', icon: 'pipeline', perm: ['enquiries.view', 'orders.view'] },
+    { to: '/campaigns', label: 'Exhibitions', icon: 'campaigns', perm: 'campaigns.view' },
+    { to: '/past-customers', label: 'Past customers', icon: 'history', perm: 'past.view' },
   ] },
-  { group: 'Orders', items: [
+  { group: 'Production & dispatch', items: [
     { to: '/orders', label: 'Active orders', icon: 'box', perm: 'orders.view' },
     { to: '/production', label: 'Production board', icon: 'factory', perm: 'orders.view' },
     { to: '/dispatches', label: 'Dispatches', icon: 'truck', perm: 'orders.view' },
@@ -35,12 +36,14 @@ const NAV = [
   ] },
   { group: 'Catalogue', items: [
     { to: '/products', label: 'Products & prices', icon: 'products', perm: 'products.view' },
-    { to: '/objects', label: 'Objects & QR', icon: 'qr', perm: 'objects.view' },
   ] },
   { group: 'Management', items: [
     { to: '/reports', label: 'Reports', icon: 'chart', perm: 'reports.view' },
     { to: '/team', label: 'Team & approvals', icon: 'team', perm: ['team.view', 'quotes.approve'], badge: 'approvals' },
     { to: '/settings', label: 'Settings', icon: 'settings', perm: 'settings.manage' },
+  ] },
+  { group: 'QR module', items: [
+    { to: '/objects', label: 'Objects & QR codes', icon: 'qr', perm: 'objects.view' },
   ] },
 ];
 

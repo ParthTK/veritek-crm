@@ -1,12 +1,14 @@
 // Exhibitions & campaigns: a page per event with its enquiry funnel, quotations, orders, revenue and cost.
 // Values are kept per currency; ROI is shown only where cost and revenue are in the same currency.
-import { all, get, insert, tx, update } from '../db.js';
+import { all, get, insert, run, tx, update } from '../db.js';
 import {
-  Check, notFound, nowIso, str, intId, audit, placeholders,
+  Check, notFound, nowIso, today, str, intId, audit, placeholders,
 } from '../util.js';
-import { CAMPAIGN_TYPES, CAMPAIGN_STATUSES, CURRENCIES, OPEN_ENQUIRY_STAGES, labelOf } from '../../shared/constants.js';
+import {
+  CAMPAIGN_TYPES, CAMPAIGN_STATUSES, CURRENCIES, OPEN_ENQUIRY_STAGES, VISIT_OUTCOMES, labelOf,
+} from '../../shared/constants.js';
 import { toMinor } from '../../shared/rules.js';
-import { enquiryScope } from '../access.js';
+import { assertCustomer, customerScope, enquiryScope } from '../access.js';
 import { requireActiveUser } from './people.js';
 
 const OPEN = OPEN_ENQUIRY_STAGES.map((s) => `'${s}'`).join(',');
@@ -49,7 +51,13 @@ export function campaignMetrics(campaignId, user) {
   const won = enquiries.filter((e) => e.stage === 'won').length;
   const cost = campaign?.cost_minor ?? null;
   const costCurrency = campaign?.cost_currency || 'INR';
+  const custScope = customerScope(user, 'c');
+  const visits = get(`SELECT COUNT(*) AS visitors, COALESCE(SUM(CASE WHEN v.enquiry_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS with_enquiry, COALESCE(SUM(CASE WHEN v.outcome = 'follow_up' AND v.enquiry_id IS NULL THEN 1 ELSE 0 END), 0) AS to_follow_up
+    FROM exhibition_visits v JOIN customers c ON c.id = v.customer_id WHERE v.campaign_id = ? ${custScope ? `AND ${custScope}` : ''}`, campaignId);
   return {
+    visitors: visits.visitors,
+    visitors_with_enquiry: visits.with_enquiry,
+    visitors_to_follow_up: visits.to_follow_up,
     enquiries: enquiries.length,
     assigned: enquiries.filter((e) => e.owner_id).length,
     contacted: enquiries.filter((e) => e.first_response_at).length,
@@ -114,8 +122,98 @@ export function campaignDetail(id, user) {
     campaign: { ...c, type_label: labelOf(CAMPAIGN_TYPES, c.type), status_label: labelOf(CAMPAIGN_STATUSES, c.status) },
     metrics: campaignMetrics(id, user),
     enquiries,
+    visits: exhibitionVisits(id, user),
     by_salesperson: bySalesperson,
   };
+}
+
+// ------------------------------------------------------------------ customers met at an exhibition
+export function exhibitionVisits(campaignId, user) {
+  const scope = customerScope(user, 'c');
+  return all(`SELECT v.*, c.company_name AS customer_name, c.city, ct.name AS contact_name, ct.phone_raw AS contact_phone, u.name AS met_by_name, e.code AS enquiry_code, e.stage AS enquiry_stage
+    FROM exhibition_visits v JOIN customers c ON c.id = v.customer_id LEFT JOIN contacts ct ON ct.id = v.contact_id LEFT JOIN users u ON u.id = v.met_by LEFT JOIN enquiries e ON e.id = v.enquiry_id
+    WHERE v.campaign_id = ? ${scope ? `AND ${scope}` : ''} ORDER BY v.visited_on DESC, c.company_name`, campaignId)
+    .map((v) => ({ ...v, outcome_label: labelOf(VISIT_OUTCOMES, v.outcome) }));
+}
+
+/** The date to record for a visit: the given day, kept inside the exhibition's dates when they are known. */
+function visitDay(campaign, date) {
+  let d = date || today();
+  if (campaign.end_date && d > campaign.end_date) d = campaign.end_date;
+  if (campaign.start_date && d < campaign.start_date) d = campaign.start_date;
+  return d;
+}
+
+export function saveVisit(campaignId, visitId, input, user) {
+  const campaign = get('SELECT * FROM campaigns WHERE id = ?', campaignId);
+  if (!campaign) throw notFound('Exhibition');
+  const cur = visitId ? get('SELECT * FROM exhibition_visits WHERE id = ? AND campaign_id = ?', visitId, campaignId) : null;
+  if (visitId && !cur) throw notFound('Visit');
+  const c = new Check();
+  const customerId = cur ? cur.customer_id : intId(input.customer_id);
+  if (!customerId) c.fail('customer_id', 'Choose the customer who visited');
+  else {
+    const customer = get('SELECT id, merged_into_id FROM customers WHERE id = ?', customerId);
+    if (!customer) c.fail('customer_id', 'Customer not found');
+    else if (customer.merged_into_id) c.fail('customer_id', 'This profile was merged — choose the surviving customer');
+    else assertCustomer(user, customerId);
+    if (!cur && get('SELECT id FROM exhibition_visits WHERE campaign_id = ? AND customer_id = ?', campaignId, customerId)) c.fail('customer_id', 'This customer is already recorded for this exhibition');
+  }
+  const contactId = input.contact_id !== undefined ? intId(input.contact_id) : cur?.contact_id ?? null;
+  if (contactId && customerId && !get('SELECT id FROM contacts WHERE id = ? AND customer_id = ?', contactId, customerId)) c.fail('contact_id', 'Choose a contact of this customer');
+  c.date('visited_on', input.visited_on);
+  const outcome = input.outcome ?? cur?.outcome ?? 'follow_up';
+  if (!VISIT_OUTCOMES.some((o) => o.value === outcome)) c.fail('outcome', 'Choose an outcome');
+  const metBy = input.met_by !== undefined ? intId(input.met_by) : cur?.met_by ?? user.id;
+  if (metBy) requireActiveUser(c, 'met_by', metBy, 'Met by');
+  c.text('interest', input.interest, { max: 200, label: 'Interested in' });
+  c.note('notes', input.notes);
+  c.throwIfAny();
+  const stamp = nowIso();
+  const data = {
+    contact_id: contactId, visited_on: input.visited_on || cur?.visited_on || visitDay(campaign), met_by: metBy, outcome,
+    interest: input.interest !== undefined ? str(input.interest, 200) : cur?.interest ?? null, notes: input.notes !== undefined ? str(input.notes, 1000) : cur?.notes ?? null, updated_at: stamp,
+  };
+  return tx(() => {
+    if (cur) {
+      update('exhibition_visits', cur.id, { ...data, outcome: cur.enquiry_id ? 'enquiry' : outcome });
+      audit('campaign', campaignId, 'visit_updated', { customer_id: customerId });
+      return { id: cur.id };
+    }
+    const enquiry = get('SELECT id FROM enquiries WHERE campaign_id = ? AND customer_id = ? ORDER BY id DESC LIMIT 1', campaignId, customerId);
+    const newId = insert('exhibition_visits', {
+      ...data, campaign_id: campaignId, customer_id: customerId, enquiry_id: enquiry?.id ?? null, outcome: enquiry ? 'enquiry' : outcome, created_by: user.id, created_at: stamp,
+    });
+    audit('campaign', campaignId, 'visit_added', { customer_id: customerId });
+    return { id: newId };
+  });
+}
+
+export function deleteVisit(campaignId, visitId, user) {
+  const v = get('SELECT * FROM exhibition_visits WHERE id = ? AND campaign_id = ?', visitId, campaignId);
+  if (!v) throw notFound('Visit');
+  assertCustomer(user, v.customer_id);
+  return tx(() => {
+    run('DELETE FROM exhibition_visits WHERE id = ?', visitId);
+    audit('campaign', campaignId, 'visit_removed', { customer_id: v.customer_id });
+    return { ok: true };
+  });
+}
+
+/** An enquiry tagged to an exhibition means that customer met us there: record or complete their visit. */
+export function linkVisitToEnquiry({ campaignId, customerId, contactId, enquiryId, receivedAt }, user) {
+  const campaign = get('SELECT * FROM campaigns WHERE id = ?', campaignId);
+  if (campaign?.type !== 'exhibition') return;
+  const stamp = nowIso();
+  const visit = get('SELECT id, enquiry_id FROM exhibition_visits WHERE campaign_id = ? AND customer_id = ?', campaignId, customerId);
+  if (visit) {
+    if (!visit.enquiry_id) update('exhibition_visits', visit.id, { enquiry_id: enquiryId, outcome: 'enquiry', updated_at: stamp });
+    return;
+  }
+  insert('exhibition_visits', {
+    campaign_id: campaignId, customer_id: customerId, contact_id: contactId ?? null, visited_on: visitDay(campaign, String(receivedAt).slice(0, 10)), met_by: user?.id ?? null,
+    outcome: 'enquiry', enquiry_id: enquiryId, created_by: user?.id ?? null, created_at: stamp, updated_at: stamp,
+  });
 }
 
 export function saveCampaign(id, input, user) {

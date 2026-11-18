@@ -43,6 +43,10 @@ Changes are audited (Settings → Audit log). Environment variables are in [setu
 | `staleWorkingDays` | `2` |
 | `readyGraceWorkingDays` | `1` |
 | `enquiryResponseWorkingDays` | `1` |
+| `pipelineQuoteDraftWorkingDays` | `2` |
+| `pipelineQuoteDecisionWorkingDays` | `5` |
+| `pipelineConfirmationWorkingDays` | `2` |
+| `pipelineAdvanceWorkingDays` | `3` |
 | `escalateAfterWorkingDays` | `1` |
 | `reactivationDailyCapPerOwner` | `5` |
 | `noteMaxLength` | `1000` |
@@ -183,7 +187,7 @@ Settings → Dropdowns. Codes are stable; labels can be renamed, values added, a
 | Enquiry assignment rules | Settings → Regions, factories & rules | Owner for new enquiries by region, product family and market (lowest priority number first) |
 | Customer tags | Settings → Regions, factories & rules | Also created on the fly from a customer's tag field |
 | Product categories, products, options, documents | Products & prices | Categories are the product families used in filters, rules and reports |
-| Campaigns | Campaigns | Exhibitions and events that enquiries can be linked to |
+| Exhibitions | Exhibitions | Exhibitions and events, the customers met there and the enquiries linked to them |
 | Object categories & field templates | Objects & QR → Categories | Pre-fill custom fields on new objects |
 | People, roles, regions, factories | Settings → People & access | One account per person; named owners without sign-in |
 | Monthly sales targets | Team & approvals → Targets | Per person and month, in the reporting currency |

@@ -36,8 +36,10 @@ export function QuickEntryProvider({ children }) {
   const open = useCallback((tab, preset = null) => {
     const allowed = { enquiry: can('enquiries.edit'), followup: can('tasks.edit'), update: can('orders.update'), dispatch: can('dispatch.post') };
     const first = Object.keys(allowed).find((k) => allowed[k]);
+    // Opened from a customer or an exhibition: start a fresh enquiry already filled in with them.
+    if (tab === 'enquiry' && preset) setDraft({ ...newEnquiryDraft(user, meta), ...preset });
     setState({ open: true, tab: tab && allowed[tab] ? tab : first, preset });
-  }, [can]);
+  }, [can, user, meta]);
   const close = useCallback(() => setState((s) => ({ ...s, open: false })), []);
   const value = useMemo(() => ({ open, close }), [open, close]);
   const dirty = draft.customer || draft.new_customer?.company_name || draft.lines.some((l) => l.product_id || l.requirement || l.qty) || draft.note;
