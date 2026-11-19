@@ -478,9 +478,10 @@ a.alert-row:hover { background: var(--surface-2); text-decoration: none; }
 
 /* ============================================================ merged modules: charts, boards, documents */
 :root {
-  --series-1: #5b2aa8; --series-2: #e5a100; --series-3: #1baf7a; --series-4: #2a78d6;
+  --series-1: #5d2cab; --series-2: #e5a100; --series-3: #1baf7a; --series-4: #2a78d6;
   --series-5: #e87ba4; --series-6: #d64545; --series-7: #0b8f86; --series-8: #8a6d3b;
   --viz-grid: #ece7f4; --viz-axis: #cdc5dc; --viz-muted: #6c6480;
+  --map-land: #e4dfed; --map-land-on: #d9d1e8; --map-border: #ffffff;
   --accent: var(--brand); --accent-soft: var(--brand-soft);
 }
 @media (prefers-color-scheme: dark) {
@@ -488,12 +489,14 @@ a.alert-row:hover { background: var(--surface-2); text-decoration: none; }
     --series-1: #a476f0; --series-2: #f0bf5a; --series-3: #4fd19c; --series-4: #6ea8f0;
     --series-5: #e98fb3; --series-6: #ff7b72; --series-7: #4cc9bd; --series-8: #c9a46a;
     --viz-grid: #2d2640; --viz-axis: #433a59; --viz-muted: #988fae;
+    --map-land: #2a2338; --map-land-on: #372e4a; --map-border: #1b1625;
   }
 }
 :root[data-theme="dark"] {
   --series-1: #a476f0; --series-2: #f0bf5a; --series-3: #4fd19c; --series-4: #6ea8f0;
   --series-5: #e98fb3; --series-6: #ff7b72; --series-7: #4cc9bd; --series-8: #c9a46a;
   --viz-grid: #2d2640; --viz-axis: #433a59; --viz-muted: #988fae;
+  --map-land: #2a2338; --map-land-on: #372e4a; --map-border: #1b1625;
 }
 .chart { position: relative; width: 100%; }
 .chart-empty { display: flex; align-items: center; justify-content: center; height: 100%; padding: 0 12px; text-align: center; color: var(--text-3); font-size: 13px; }
@@ -516,6 +519,27 @@ a.alert-row:hover { background: var(--surface-2); text-decoration: none; }
 .viz-tooltip .t-row b { font-weight: 650; color: var(--text); font-variant-numeric: tabular-nums; }
 .viz-tooltip .t-row span { color: var(--text-2); }
 .viz-tooltip .key { width: 12px; height: 2px; border-radius: 1px; flex: none; }
+/* world map: plain land, one circle per country (2px surface ring), a size key, the ranked table beside it */
+.map-card { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
+@media (max-width: 1180px) { .map-card { grid-template-columns: minmax(0, 1fr); } }
+.world-map { position: relative; width: 100%; }
+.world-map > svg { display: block; width: 100%; height: auto; overflow: visible; }
+.world-map .land { fill: var(--map-land); stroke: var(--map-border); stroke-width: 0.75px; vector-effect: non-scaling-stroke; }
+.world-map .land.on { fill: var(--map-land-on); }
+.world-map .bubble { cursor: pointer; outline: none; }
+.world-map .bubble .hit { fill: transparent; }
+.world-map .bubble .mark { fill: var(--series-1); stroke: var(--surface); stroke-width: 2px; vector-effect: non-scaling-stroke; transition: opacity 0.12s; }
+.world-map .bubble:hover .mark, .world-map .bubble:focus-visible .mark { opacity: 0.82; stroke: var(--text); }
+.world-map .bubble.sel .mark { stroke: var(--text); stroke-width: 2.5px; }
+.world-map .map-label { fill: var(--text-2); font-family: var(--font); font-weight: 600; paint-order: stroke; stroke: var(--surface); stroke-linejoin: round; pointer-events: none; }
+.world-map .map-tip { transform: translate(-50%, -100%); }
+.map-placeholder { aspect-ratio: 1000 / 442; border-radius: var(--radius-sm); background: var(--surface-2); }
+.map-empty { position: absolute; left: 0; right: 0; top: 40%; text-align: center; color: var(--text-3); font-size: 13px; pointer-events: none; }
+.map-key { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 12px; color: var(--text-2); }
+.map-key svg { display: block; flex: none; }
+.map-key circle { fill: var(--series-1); stroke: var(--surface); stroke-width: 2px; }
+.map-table td, .map-table th { padding: 7px 8px; }
+.map-table .btn.link { font-weight: 600; text-align: left; }
 .progress { height: 7px; background: var(--viz-track); border-radius: 4px; overflow: hidden; min-width: 60px; }
 .progress > span { display: block; height: 100%; background: var(--series-1); border-radius: 4px; }
 .progress.good > span { background: var(--success); }

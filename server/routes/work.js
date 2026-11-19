@@ -4,7 +4,7 @@ import { get } from '../db.js';
 import { intId, notFound, now, tz } from '../util.js';
 import { allow } from '../auth.js';
 import { assertCustomer } from '../access.js';
-import { dashboard } from '../services/dashboard.js';
+import { dashboard, salesMap } from '../services/dashboard.js';
 import { salesDashboard } from '../services/analytics.js';
 import { workQueue, dataQuality } from '../services/queue.js';
 import { pastCustomers, recordUpdate, openLinkedEnquiry, closeCase, reactivationMetrics } from '../services/reactivation.js';
@@ -20,6 +20,7 @@ import { h, idempotent, sendCsv } from './helpers.js';
 const r = Router();
 
 r.get('/dashboard', allow('dashboard.view'), h((req) => dashboard(req.query, req.user)));
+r.get('/dashboard/map', allow('dashboard.view'), h((req) => salesMap(req.user)));
 r.get('/analytics', allow('analytics.view'), h((req) => salesDashboard(req.query, req.user)));
 r.get('/queue', allow('queue.view'), h((req) => workQueue(req.user)));
 r.get('/data-quality', allow('queue.view'), h((req) => dataQuality(req.user)));

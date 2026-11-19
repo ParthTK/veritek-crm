@@ -4,7 +4,9 @@ For the person who keeps the CRM current for everyone else.
 
 ## Start of the day
 
-- **Dashboard**: enquiries not replied, pending quotations, delayed orders and follow-ups due.
+- **Dashboard**: enquiries not replied, pending quotations, delayed orders and follow-ups due. The world map shows
+  where this financial year's enquiries and sales come from: switch between Enquiries and Sales, point at a circle
+  for its numbers, and click a country (India shows its states) for its top customers.
 - **Follow-ups**: everyone's overdue and today's next actions. Pick one, record what happened, set the next
   date, Save. *Reschedule*, *Reassign* and *Cancel* are under the form.
 - The search box (Ctrl+K) finds a company by name, phone, email, enquiry, order or PO number.

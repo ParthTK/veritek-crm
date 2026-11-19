@@ -1,6 +1,9 @@
 // The CRM flow from first contact to dispatch, through the HTTP API: customer → exhibition visit → enquiry →
 // reply → quotation (pending, sent, approved, rejected) → confirmation → payment → production → dispatch, with the
 // sales pipeline, dashboard and order screens checked at each step. Runs against a seeded database.
+import fs from 'node:fs';
+import { COUNTRIES } from '../shared/constants.js';
+
 const BASE = process.env.API || 'http://localhost:4399/api';
 let failures = 0;
 let checks = 0;
@@ -255,6 +258,27 @@ plain = await orderNow(direct.data.id);
 log(plain.payment.code === 'part_paid', 'a first payment with no advance terms shows as Part paid', plain.payment.code);
 await pay(direct.data.id, (plain.finance.balance_minor / 100).toFixed(2), `FULL${stamp}`);
 log((await orderNow(direct.data.id)).payment.code === 'paid', 'and the rest makes it Paid');
+
+// ---------------------------------------------------------------- where enquiries and sales come from
+const mapOf = async (who) => (await who.get('/dashboard/map')).data;
+let world = await mapOf(exec);
+const india = () => world.countries.find((c) => c.code === 'IN');
+log(world.from.endsWith('-04-01') && world.from <= today, 'the map covers this financial year, from 1 April', world.from);
+log(india()?.enquiries >= 1 && india()?.sales >= 1, 'India shows this year\'s enquiries and sales', JSON.stringify(india() && { e: india().enquiries, s: india().sales }));
+log(india()?.states.some((s) => s.name === 'Maharashtra' && s.enquiries >= 1) && india()?.customers.some((x) => x.id === customerId), 'India is broken down by state, with its top customers');
+const was = { ae: world.countries.find((c) => c.code === 'AE')?.enquiries || 0, unknown: world.unknown.enquiries };
+const dubai = (await exec.post('/customers', { company_name: `Gulf Switchgear ${stamp}`, country_code: 'AE', city: 'Dubai', contacts: [{ email: `buyer${stamp}@gulfswitch.example` }] })).data.id;
+await exec.post('/enquiries', { ...enquiryBody, customer_id: dubai, contact_id: undefined, source_code: 'email' });
+const nowhere = (await exec.post('/customers', { company_name: `Unplaced Panels ${stamp}`, contacts: [{ email: `info${stamp}@unplaced.example` }] })).data.id;
+await exec.post('/enquiries', { ...enquiryBody, customer_id: nowhere, contact_id: undefined, source_code: 'email' });
+world = await mapOf(exec);
+log(world.countries.find((c) => c.code === 'AE')?.enquiries === was.ae + 1, 'an enquiry from Dubai shows on the United Arab Emirates');
+log(world.unknown.enquiries === was.unknown + 1, 'an enquiry from a customer with no country is counted as such, not placed');
+log(world.totals.enquiries === world.countries.reduce((n, c) => n + c.enquiries, 0) + world.unknown.enquiries, 'the countries and the unplaced add up to the total');
+const shop = await mapOf(production);
+log(shop.totals.enquiries === 0 && shop.countries.every((c) => !('value_by_currency' in c)), 'production sees no enquiries and no values on the map');
+const outline = JSON.parse(fs.readFileSync(new URL('../client/src/data/world-map.json', import.meta.url), 'utf8'));
+log(COUNTRIES.every((c) => Number.isFinite(outline.countries[c.value]?.x) && Number.isFinite(outline.countries[c.value]?.y)), 'every country a customer can have has a place on the world map');
 
 console.log(failures ? `\n${failures} OF ${checks} FLOW CHECKS FAILED` : `\nALL ${checks} FLOW CHECKS PASSED`);
 process.exit(failures ? 1 : 0);

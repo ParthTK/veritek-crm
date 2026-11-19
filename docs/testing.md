@@ -47,7 +47,7 @@ ALL 82 CHECKS PASSED
 ALL OBJECT CHECKS PASSED
 ```
 
-### Customer-to-dispatch flow (`tests/flow.mjs`, 93 checks)
+### Customer-to-dispatch flow (`tests/flow.mjs`, 101 checks)
 
 Customer first; exhibition, visitor and linked enquiry; replied / not replied; quotation pending, sent, approved
 and rejected; confirmation, advance, production and dispatch, with the sales pipeline, dashboard, order list and
@@ -56,7 +56,10 @@ data kept out of customer and order records. Also the short new-customer form, p
 code, the editable source list, and every kind of move on the enquiry stage board: straight through, refused
 with the reason, or asking for a next action, review date or lost reason first. Payments recorded on the order:
 the order total matches the quotation total, the balance, Paid once it is covered, undoing a payment, and a new
-order without a quotation going from no payment to Part paid to Paid.
+order without a quotation going from no payment to Part paid to Paid. The dashboard's world map: this financial
+year only, India by state with its top customers, an enquiry from Dubai counted on the United Arab Emirates, one
+from a customer with no country counted apart, totals that add up, nothing for production beyond its scope and no
+values without values access, and a place on the map for every country a customer can have.
 
 ### People & access (`tests/people.mjs`)
 

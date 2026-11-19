@@ -77,7 +77,7 @@ const paths = [
 
 for (const p of paths) await admin(p);
 // Role-scoped views of the busiest lists and pages.
-const scoped = ['/pipeline', '/dashboard', '/analytics', '/queue', '/customers', '/enquiries', '/quotations', '/orders', '/production/board', '/finance/overview', '/finance/invoices', '/tasks', '/team/performance', '/reports', ...reportKeys.slice(0, 8).map((k) => `/reports/${k}`)];
+const scoped = ['/pipeline', '/dashboard', '/dashboard/map', '/analytics', '/queue', '/customers', '/enquiries', '/quotations', '/orders', '/production/board', '/finance/overview', '/finance/invoices', '/tasks', '/team/performance', '/reports', ...reportKeys.slice(0, 8).map((k) => `/reports/${k}`)];
 for (const [, call] of Object.entries(roles)) for (const p of scoped) await call(p);
 
 for (const p of problems) console.log(`FAIL ${p}`);

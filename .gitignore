@@ -1,6 +1,7 @@
 node_modules/
 client/dist/
-data/
+# The local database folder only (client/src/data holds the world map and is kept).
+/data/
 *.log
 .DS_Store
 .env

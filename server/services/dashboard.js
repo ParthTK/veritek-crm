@@ -4,8 +4,9 @@
 import { all, get } from '../db.js';
 import { now, today, tz, calendar, settings, intId, optionLabel, placeholders } from '../util.js';
 import { addDays, addWorkingDays, localDate, zonedToUtc } from '../../shared/dates.js';
-import { OPEN_ENQUIRY_STAGES, SELECTABLE_PHASES, PHASES, labelOf } from '../../shared/constants.js';
-import { customerScope, enquiryScope, quotationScope, taskScope } from '../access.js';
+import { OPEN_ENQUIRY_STAGES, SELECTABLE_PHASES, PHASES, COUNTRIES, labelOf } from '../../shared/constants.js';
+import { customerScope, enquiryScope, orderScope, quotationScope, taskScope } from '../access.js';
+import { hasPerm } from '../auth.js';
 import { loadOrdersWithLines, orderListRow } from './orders.js';
 import { TASK_COLUMNS, decorateTask } from './tasks.js';
 import { pastCustomers } from './reactivation.js';
@@ -34,6 +35,71 @@ function orderFilters(q) {
     params.push(q.family);
   }
   return { where, params };
+}
+
+/** The first day of the financial year that today falls in (April by default). */
+export function financialYearStart(day = today()) {
+  const startMonth = settings().company.fiscalYearStartMonth || 4;
+  const [y, m] = day.split('-').map(Number);
+  return `${m >= startMonth ? y : y - 1}-${String(startMonth).padStart(2, '0')}-01`;
+}
+
+/**
+ * Where this financial year's enquiries and sales come from, by the customer's country and, for India, state.
+ * Enquiries: received this year, cancelled ones left out. Sales: confirmed orders received this year, with their
+ * value before tax and net of cancellations, per currency (never added across currencies; lines without a price
+ * are not counted, and the orders that have them are counted instead). Each user sees only their own scope.
+ */
+export function salesMap(user) {
+  const from = financialYearStart();
+  const eScope = enquiryScope(user, 'e');
+  const oScope = orderScope(user, 'o');
+  const enquiries = hasPerm(user, 'enquiries.view') ? all(`SELECT c.id, c.company_name, c.country_code, c.state, COUNT(*) AS n
+    FROM enquiries e JOIN customers c ON c.id = e.customer_id
+    WHERE e.stage <> 'cancelled' AND COALESCE(e.received_at, e.created_at) >= ? ${eScope ? `AND ${eScope}` : ''}
+    GROUP BY c.id, c.company_name, c.country_code, c.state`, zonedToUtc(from, '00:00', tz())) : [];
+  const orders = hasPerm(user, 'orders.view') ? all(`SELECT c.id, c.company_name, c.country_code, c.state, o.currency,
+      (SELECT SUM(CASE WHEN l.unit_price_minor IS NULL THEN NULL ELSE ROUND((l.confirmed_qty - l.cancelled_qty) * l.unit_price_minor) END) FROM order_lines l WHERE l.order_id = o.id) AS value_minor,
+      (SELECT COUNT(*) FROM order_lines l WHERE l.order_id = o.id AND l.unit_price_minor IS NULL AND l.confirmed_qty - l.cancelled_qty > 0) AS unpriced
+    FROM orders o JOIN customers c ON c.id = o.customer_id
+    WHERE o.status = 'confirmed' AND o.archived_at IS NULL AND o.received_date >= ?
+      AND EXISTS (SELECT 1 FROM order_lines l WHERE l.order_id = o.id AND l.confirmed_qty - l.cancelled_qty > 0) ${oScope ? `AND ${oScope}` : ''}`, from) : [];
+
+  const tally = () => ({ enquiries: 0, sales: 0, value_by_currency: {} });
+  const countries = new Map();
+  const add = (map, key, make) => {
+    if (!map.has(key)) map.set(key, make());
+    return map.get(key);
+  };
+  const country = (code) => add(countries, code || null, () => ({ code: code || null, ...tally(), customers: new Map(), states: new Map() }));
+  const targets = (r) => {
+    const c = country(r.country_code);
+    const out = [c, add(c.customers, r.id, () => ({ id: r.id, name: r.company_name, ...tally() }))];
+    if (r.country_code === 'IN') out.push(add(c.states, r.state || null, () => ({ name: r.state || null, ...tally() })));
+    return out;
+  };
+  let unpriced = 0;
+  for (const r of enquiries) for (const t of targets(r)) t.enquiries += r.n;
+  for (const r of orders) {
+    if (r.unpriced) unpriced++;
+    for (const t of targets(r)) {
+      t.sales++;
+      if (r.value_minor !== null) t.value_by_currency[r.currency] = (t.value_by_currency[r.currency] || 0) + r.value_minor;
+    }
+  }
+  const byActivity = (a, b) => b.enquiries + b.sales - (a.enquiries + a.sales) || String(a.name).localeCompare(String(b.name));
+  const unknown = countries.get(null) || tally();
+  const list = [...countries.values()].filter((c) => c.code).map((c) => ({
+    code: c.code, name: labelOf(COUNTRIES, c.code) || c.code, enquiries: c.enquiries, sales: c.sales, value_by_currency: c.value_by_currency,
+    customers: [...c.customers.values()].sort(byActivity).slice(0, 8),
+    ...(c.code === 'IN' ? { states: [...c.states.values()].sort((a, b) => (a.name === null) - (b.name === null) || byActivity(a, b)) } : {}),
+  })).sort(byActivity);
+  return {
+    from, to: today(),
+    countries: list,
+    unknown: { enquiries: unknown.enquiries, sales: unknown.sales },
+    totals: { enquiries: enquiries.reduce((n, r) => n + r.n, 0), sales: orders.length, unpriced },
+  };
 }
 
 function taskRows(user, q, bucketSql, bucketParams, limit = 12) {

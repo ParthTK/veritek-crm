@@ -3,11 +3,12 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../auth.jsx';
 import { useApi } from '../lib/hooks.js';
-import { date, qty } from '../lib/format.js';
-import { Badge, Button, Card, EmptyState, ErrorState, PageHeader, Spinner, Tile, Drawer, useToast } from '../components/ui.jsx';
+import { compactByCurrency, date, number, qty } from '../lib/format.js';
+import { Badge, Button, Card, EmptyState, ErrorState, PageHeader, Segmented, Spinner, Tile, Drawer, useToast } from '../components/ui.jsx';
 import { ColumnChart, BarChartH } from '../components/charts.jsx';
 import { DueBadge, LineStateBadge } from '../components/domain.jsx';
 import { FollowupForm } from '../components/forms.jsx';
+import WorldMap from '../components/WorldMap.jsx';
 import { api } from '../api.js';
 
 export default function Overview() {
@@ -63,6 +64,7 @@ export default function Overview() {
         )}
         <Card title="Production status"><BarChartH data={flow.production} label="label" format="number" series={[{ key: 'lines', label: 'In this stage' }, { key: 'delayed', label: 'Delayed' }]} /></Card>
       </div>
+      {(can('enquiries.view') || can('orders.view')) && <SalesMap />}
       <div className="grid grid-2">
         {can('tasks.edit') && (
           <Card title="Follow-ups due" flush actions={<Button size="sm" variant="ghost" to="/followups">All</Button>}>
@@ -95,6 +97,94 @@ export default function Overview() {
       <Drawer open={Boolean(task)} onClose={() => setTask(null)} title={task?.customer_name || 'Follow-up'} subtitle={task?.purpose}>
         {task && <FollowupForm task={task} onSaved={() => { toast.success('Saved'); setTask(null); reload(); }} />}
       </Drawer>
+    </div>
+  );
+}
+
+/** This financial year's enquiries and sales by country, on a world map with the same numbers in a table beside it. */
+function SalesMap() {
+  const { can } = useAuth();
+  const { data, error, reload } = useApi('/dashboard/map');
+  const [measure, setMeasure] = useState('enquiries');
+  const [selected, setSelected] = useState(null);
+  useEffect(() => {
+    const on = () => reload();
+    window.addEventListener('data:changed', on);
+    return () => window.removeEventListener('data:changed', on);
+  }, [reload]);
+  const values = can('values.view');
+  const country = data?.countries.find((c) => c.code === selected);
+  const pick = (code) => setSelected((s) => (s === code ? null : code));
+  return (
+    <Card title="Where enquiries and sales come from" sub={data ? `this financial year, since ${date(data.from, { year: true })}` : undefined}
+      actions={<Segmented label="Show on the map" value={measure} onChange={setMeasure} options={[{ value: 'enquiries', label: 'Enquiries' }, { value: 'sales', label: 'Sales' }]} />}>
+      {error && <ErrorState error={error} onRetry={reload} />}
+      {!data && !error && <Spinner />}
+      {data && (
+        <div className="map-card">
+          <div>
+            <WorldMap countries={data.countries} measure={measure} selected={selected} onSelect={pick} values={values} />
+            <div className="tiny muted mt-8">
+              Sales are confirmed orders{values ? ', valued before tax' : ''}.
+              {(data.unknown.enquiries > 0 || data.unknown.sales > 0) && ` ${countOf(data.unknown.enquiries, 'enquiry', 'enquiries')} and ${countOf(data.unknown.sales, 'sale', 'sales')} are from customers with no country set.`}
+              {values && data.totals.unpriced > 0 && ` ${countOf(data.totals.unpriced, 'order has', 'orders have')} items without a price; those items are not in the values.`}
+            </div>
+          </div>
+          {country ? <CountryDetail country={country} values={values} onBack={() => setSelected(null)} /> : <CountryTable data={data} measure={measure} values={values} onPick={pick} />}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+const countOf = (n, one, many) => `${number(n)} ${n === 1 ? one : many}`;
+
+function CountryTable({ data, measure, values, onPick }) {
+  const rows = [...data.countries].sort((a, b) => b[measure] - a[measure] || b.enquiries + b.sales - (a.enquiries + a.sales));
+  if (!rows.length) return <div className="small muted">Nothing yet this financial year.</div>;
+  return (
+    <div className="table-wrap">
+      <table className="table compact map-table">
+        <thead><tr><th>Country</th><th className="num">Enquiries</th><th className="num">Sales</th></tr></thead>
+        <tbody>
+          {rows.map((c) => (
+            <tr key={c.code} className="clickable" onClick={() => onPick(c.code)}>
+              <td>
+                <button type="button" className="btn link" onClick={(e) => { e.stopPropagation(); onPick(c.code); }}>{c.name}</button>
+                {values && c.sales > 0 && <div className="sub">{compactByCurrency(c.value_by_currency)} sold</div>}
+              </td>
+              <td className="num">{number(c.enquiries)}</td>
+              <td className="num">{number(c.sales)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function CountryDetail({ country: c, values, onBack }) {
+  return (
+    <div className="stack-sm">
+      <div><button type="button" className="btn link" onClick={onBack}>‹ All countries</button></div>
+      <div>
+        <div className="strong">{c.name}</div>
+        <div className="small muted">{countOf(c.enquiries, 'enquiry', 'enquiries')} · {countOf(c.sales, 'sale', 'sales')}{values && c.sales > 0 ? ` · ${compactByCurrency(c.value_by_currency)}` : ''}</div>
+      </div>
+      {c.states?.length > 0 && (
+        <div className="table-wrap">
+          <table className="table compact map-table">
+            <thead><tr><th>State</th><th className="num">Enquiries</th><th className="num">Sales</th></tr></thead>
+            <tbody>{c.states.map((s) => <tr key={s.name || '-'}><td>{s.name || 'Not known'}</td><td className="num">{number(s.enquiries)}</td><td className="num">{number(s.sales)}</td></tr>)}</tbody>
+          </table>
+        </div>
+      )}
+      <div className="table-wrap">
+        <table className="table compact map-table">
+          <thead><tr><th>Top customers</th><th className="num">Enquiries</th><th className="num">Sales</th></tr></thead>
+          <tbody>{c.customers.map((x) => <tr key={x.id}><td><Link to={`/customers/${x.id}`}>{x.name}</Link></td><td className="num">{number(x.enquiries)}</td><td className="num">{number(x.sales)}</td></tr>)}</tbody>
+        </table>
+      </div>
     </div>
   );
 }
