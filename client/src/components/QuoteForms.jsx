@@ -55,8 +55,8 @@ export function OutcomeForm({ r, outcome, onSaved }) {
 
 const advanceFrom = (terms) => /(\d{1,3})\s*%\s*advance/i.exec(terms || '')?.[1] || '';
 
-/** Turns an approved quotation into a confirmed order: quantities, prices and the dispatch date. */
-export function ConvertForm({ r }) {
+/** Turns an approved quotation into a confirmed order: quantities, prices and the dispatch date. Opens the order, unless `onSaved` handles it. */
+export function ConvertForm({ r, onSaved }) {
   const { can } = useAuth();
   const navigate = useNavigate();
   const { data } = useApi(`/quote-revisions/${r.id}`);
@@ -78,7 +78,8 @@ export function ConvertForm({ r }) {
       lines: f.lines.filter((l) => Number(l.qty) > 0).map((l) => ({ index: l.index, qty: Number(l.qty), unit_price: l.unit_price, ...(l.date ? { original_commitment_date: l.date } : { commitment_state: 'uncommitted' }) })),
     }, { key });
     window.dispatchEvent(new Event('data:changed'));
-    navigate(`/orders/${res.order_id}`);
+    if (onSaved) onSaved(res);
+    else navigate(`/orders/${res.order_id}`);
     return res;
   });
   return (

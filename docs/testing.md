@@ -47,7 +47,7 @@ ALL 82 CHECKS PASSED
 ALL OBJECT CHECKS PASSED
 ```
 
-### Customer-to-dispatch flow (`tests/flow.mjs`, 92 checks)
+### Customer-to-dispatch flow (`tests/flow.mjs`, 93 checks)
 
 Customer first; exhibition, visitor and linked enquiry; replied / not replied; quotation pending, sent, approved
 and rejected; confirmation, advance, production and dispatch, with the sales pipeline, dashboard, order list and

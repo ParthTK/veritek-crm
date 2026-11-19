@@ -16,7 +16,7 @@ Customer → Enquiry → Quotation → Order → Payment → Production → Disp
 | **Customers** | A short new-customer form; one page per customer with its enquiries, quotations, orders, exhibitions visited, history, contacts and details |
 | **Enquiries** | Added against a customer: products, source, notes, reply status, follow-ups and who it is assigned to. A list, and a drag-and-drop board |
 | **Quotations** | Written from the product prices; pending, sent, approved or rejected; new versions; print / PDF. An approved quotation becomes an order |
-| **Sales pipeline** | Every live deal across enquiry → quotation → confirmation → payment → production → dispatch: where it is, and why it is stuck |
+| **Sales pipeline** | Every live deal across enquiry → quotation → confirmation → payment → production → dispatch: where it is, and why it is stuck. Drag a card on to the next column to take that step |
 | **Exhibitions** | Exhibitions attended, customers visited and the enquiries they brought. Exhibition as a source names the exhibition |
 | **Orders** | Each item's progress, dispatch date and delay; payments received against the order total; dispatches and delivery |
 | **Production** | Every active item by stage; one short form moves it along or records a delay |

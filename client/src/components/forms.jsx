@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { SELECTABLE_PHASES, PHASES, WORK_STATUSES, labelOf } from '@shared/constants.js';
 import { zonedToUtc, addWorkingDays } from '@shared/dates.js';
-import { fromMinor, lineQty } from '@shared/rules.js';
+import { fromMinor, lineQty, round3 } from '@shared/rules.js';
 import { api } from '../api.js';
 import { useAuth } from '../auth.jsx';
 import { useSave } from '../lib/hooks.js';
@@ -152,7 +152,8 @@ export function ProductionUpdateForm({ line, onSaved }) {
       {blocked && <Notice tone="warn">Confirm the specification on the order before this goes into production.</Notice>}
       <div className="form-grid">
         <Field label="Stage" error={err(save, 'phase')}>
-          <Select value={f.phase} onChange={(e) => set({ phase: e.target.value })} options={SELECTABLE_PHASES.map((p) => ({ value: p, label: labelOf(PHASES, p), disabled: blocked && p !== 'received' }))} />
+          {/* Ready means all of it is built, unless a smaller quantity is typed: without a ready quantity, Dispatch would need an override to send it. */}
+          <Select value={f.phase} onChange={(e) => set({ phase: e.target.value, ...(e.target.value === 'ready' && f.ready_qty === '' ? { ready_qty: String(round3(q.confirmed - q.cancelled)) } : {}) })} options={SELECTABLE_PHASES.map((p) => ({ value: p, label: labelOf(PHASES, p), disabled: blocked && p !== 'received' }))} />
         </Field>
         <Field label="Expected dispatch" error={err(save, 'forecast_dispatch_date')} hint={line.original_commitment_date ? `Promised ${date(line.original_commitment_date)}` : 'No date promised yet'}>
           <Input type="date" value={f.forecast_dispatch_date} onChange={(e) => set({ forecast_dispatch_date: e.target.value })} />
@@ -179,6 +180,56 @@ export function ProductionUpdateForm({ line, onSaved }) {
         <SaveStatus save={save} />
         <Button type="submit" variant="cta" loading={save.saving}>Save update</Button>
       </div>
+    </form>
+  );
+}
+
+/** Marks what is left on an order as ready for dispatch, item by item, with the quantity ready. */
+export function ReadyForm({ lines, onSaved }) {
+  const { user } = useAuth();
+  const open = lines.filter((l) => l.status?.active !== false && l.quantities.remaining > 0);
+  const [qty, setQty] = useState(() => Object.fromEntries(open.map((l) => [l.id, String(round3(l.quantities.confirmed - l.quantities.cancelled))])));
+  const [errors, setErrors] = useState({});
+  const [done, setDone] = useState(() => new Set());
+  const [saving, setSaving] = useState(false);
+  const submit = async () => {
+    setSaving(true);
+    const failed = {};
+    const saved = new Set(done);
+    for (const l of open.filter((x) => !saved.has(x.id))) {
+      try {
+        await api.post(`/order-lines/${l.id}/update`, { version: l.version, reported_by_id: user.id, phase: 'ready', ready_qty: Number(qty[l.id]) });
+        saved.add(l.id);
+      } catch (e) {
+        failed[l.id] = e.fields ? Object.values(e.fields).join(' ') : e.message;
+      }
+    }
+    setDone(saved);
+    setErrors(failed);
+    setSaving(false);
+    if (!Object.keys(failed).length) onSaved?.();
+  };
+  return (
+    <form className="stack-sm" onSubmit={(e) => { e.preventDefault(); submit(); }}>
+      <div className="table-wrap">
+        <table className="table compact">
+          <thead><tr><th>Item</th><th className="num">Left to send</th><th className="num" style={{ width: 120 }}>Ready</th></tr></thead>
+          <tbody>
+            {open.map((l) => (
+              <tr key={l.id}>
+                <td>
+                  <strong>{l.product}</strong><div className="sub">{done.has(l.id) ? 'Saved' : l.phase_label}</div>
+                  {errors[l.id] && <div className="tiny danger-text">{errors[l.id]}</div>}
+                </td>
+                <td className="num">{fmtQty(l.quantities.remaining, l.unit)}</td>
+                <td><Input type="number" min={0} step="any" className="num" value={qty[l.id]} disabled={done.has(l.id)} onChange={(e) => setQty({ ...qty, [l.id]: e.target.value })} aria-label={`Quantity ready of ${l.product}`} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {!open.length && <Notice tone="info">Nothing is left to make on this order.</Notice>}
+      <div className="row between"><span className="small muted">Ready counts everything built so far, including what has already been sent.</span><Button type="submit" variant="cta" loading={saving} disabled={!open.length}>Mark ready</Button></div>
     </form>
   );
 }
@@ -321,10 +372,10 @@ export function ReasonForm({ label, button, note, danger, onSubmit }) {
 }
 
 // ------------------------------------------------------------------ payment
-/** Money received against an order: an advance, part payment or the balance. */
-export function PaymentForm({ order, balanceMinor, onSaved }) {
+/** Money received against an order: an advance, part payment or the balance. `amountMinor` fills in the amount expected. */
+export function PaymentForm({ order, amountMinor, onSaved }) {
   const save = useSave();
-  const [f, setF] = useState({ amount: balanceMinor ? fromMinor(balanceMinor) : '', effective_date: todayLocal(), reference: '' });
+  const [f, setF] = useState({ amount: amountMinor ? fromMinor(amountMinor) : '', effective_date: todayLocal(), reference: '' });
   return (
     <form className="stack-sm" onSubmit={(e) => { e.preventDefault(); save.run(async () => { const r = await api.post(`/finance/orders/${order.id}/advances`, f); onSaved?.(r); return r; }); }}>
       <div className="form-grid">

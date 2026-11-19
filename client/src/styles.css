@@ -537,7 +537,15 @@ a.kcard:hover { border-color: var(--brand); text-decoration: none; }
 .kclose-bar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 60; display: flex; gap: 8px; padding: 8px; max-width: calc(100vw - 24px); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow-lg); }
 .kclose { min-width: 120px; padding: 16px 18px; text-align: center; font-size: 13px; font-weight: 600; color: var(--text-2); background: var(--surface-2); border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); }
 .kclose.drop-over { color: var(--brand); border: 1px solid var(--brand); background: var(--brand-soft); }
-.kclose.won.drop-over { color: var(--success); border-color: var(--success); }
+.kclose.won.drop-over, .kclose.done.drop-over { color: var(--success); border-color: var(--success); }
+.board { position: relative; min-width: 0; }
+.board-edge { position: absolute; top: 0; bottom: 12px; width: 52px; z-index: 4; pointer-events: none; }
+.board-edge.left { left: 0; background: linear-gradient(to right, var(--page) 15%, transparent); }
+.board-edge.right { right: 0; background: linear-gradient(to left, var(--page) 15%, transparent); }
+.board-edge button { pointer-events: auto; position: absolute; top: 56px; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border-radius: 50%; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-2); box-shadow: var(--shadow); cursor: pointer; }
+.board-edge.left button { left: 6px; }
+.board-edge.right button { right: 6px; }
+.board-edge button:hover { color: var(--brand); border-color: var(--brand); }
 .kclose.lost.drop-over, .kclose.cancelled.drop-over { color: var(--danger); border-color: var(--danger); background: var(--danger-soft); }
 
 /* Quotation lines, totals, revision diff */

@@ -94,7 +94,7 @@ function enquiryBrief(e) {
 function quoteBrief(q) {
   if (!q) return null;
   const tracking = quoteTracking(q.status);
-  return { id: q.id, number: q.number, revision_no: q.revision_no, status: q.status, approval_status: q.approval_status, tracking, tracking_label: labelOf(QUOTE_TRACKING, tracking), sent_at: q.sent_at, validity_date: q.validity_date };
+  return { id: q.id, number: q.number, revision_id: q.revision_id, revision_no: q.revision_no, status: q.status, approval_status: q.approval_status, tracking, tracking_label: labelOf(QUOTE_TRACKING, tracking), sent_at: q.sent_at, validity_date: q.validity_date };
 }
 const sourceOf = (e) => (e ? {
   source_label: optionLabel('enquiry_source', e.source_code), exhibition: e.campaign_id && e.campaign_type === 'exhibition' ? { id: e.campaign_id, name: e.campaign_name } : null, campaign_id: e.campaign_id ?? null,

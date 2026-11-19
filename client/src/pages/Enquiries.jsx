@@ -9,6 +9,7 @@ import { Badge, Button, Card, Chips, DataTable, ErrorState, Modal, PageHeader, P
 import { DueBadge, StageBadge, FilterBar, ReplyBadge } from '../components/domain.jsx';
 import { useQuickEntry } from '../components/QuickEntry.jsx';
 import StageForm from '../components/StageForm.jsx';
+import Board from '../components/Board.jsx';
 
 export default function Enquiries() {
   const { can } = useAuth();
@@ -140,22 +141,13 @@ function PipelineBoard({ f, setF }) {
       if (card) move(card, stage);
     },
   } : {});
-  // Near either end of the board, keep scrolling so that every column can be reached with a card in hand.
-  const scrollAtEdges = (e) => {
-    if (!held.current) return;
-    const el = e.currentTarget;
-    const { left, right } = el.getBoundingClientRect();
-    if (e.clientX > right - 70) el.scrollLeft += 24;
-    else if (e.clientX < left + 70) el.scrollLeft -= 24;
-  };
-
   return (
     <>
       <div className="filter-bar"><FilterBar value={f} onChange={setF} fields={['owner']} /></div>
       {!data && loading && <Spinner />}
       {data && !data.total && <EmptyState icon="pipeline" title="No open opportunities" message="New enquiries appear here." />}
       {data && data.total > 0 && (
-        <div className="kanban" onDragOver={canMove ? scrollAtEdges : undefined}>
+        <Board dragging={dragging}>
           {data.columns.map((col) => (
             <div key={col.stage} className={`kcol ${over === col.stage ? 'drop-over' : ''}`} data-stage={col.stage} {...dropTarget(col.stage)}>
               <div className="kcol-head">
@@ -174,7 +166,7 @@ function PipelineBoard({ f, setF }) {
               </div>
             </div>
           ))}
-        </div>
+        </Board>
       )}
       {dragging && (
         <div className="kclose-bar" role="group" aria-label="Close this enquiry">

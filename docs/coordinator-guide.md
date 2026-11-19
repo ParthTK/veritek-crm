@@ -51,7 +51,22 @@ A repeat order without a quotation: **Orders → New order**.
 ## Sales pipeline
 
 Every live deal at one of six steps: enquiry, quotation, confirmation, payment, production, dispatch. Red and
-amber cards are stuck, and the card says why. Nothing is entered here: a deal moves as its records change.
+amber cards are stuck, and the card says why.
+
+Drag a card on to the next column to take that step; a short form opens first:
+
+| Drop on | What it does |
+|---|---|
+| Quotation | Starts the quotation from the enquiry's products |
+| Confirmation | Records that the customer approved the sent quotation |
+| Payment or Production | Creates the order from the approved quotation (or confirms a draft order) |
+| Production (from Payment) | Records the advance |
+| Dispatch | Marks what is ready |
+| **Dispatched** (appears at the bottom while you drag an order) | Records the dispatch |
+| **Lost** (appears while you drag an enquiry) | Closes the enquiry as lost, with the reason |
+
+A card does not go back or skip a step: the reason shows and the card stays. The card then sits wherever its
+records put it. On a phone, open the card and use its next-step button.
 
 ## Exhibitions
 

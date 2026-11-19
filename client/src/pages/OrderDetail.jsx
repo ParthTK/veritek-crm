@@ -130,7 +130,7 @@ export default function OrderDetail() {
         {modal?.type === 'comm' && <CommunicationForm order={o} lines={lines} onSaved={() => done('Saved')} />}
       </Modal>
       <Modal open={modal?.type === 'payment'} size="sm" onClose={close} title="Record payment">
-        {modal?.type === 'payment' && <PaymentForm order={o} balanceMinor={finance?.balance_minor} onSaved={() => done('Payment saved')} />}
+        {modal?.type === 'payment' && <PaymentForm order={o} amountMinor={finance?.balance_minor} onSaved={() => done('Payment saved')} />}
       </Modal>
       <Modal open={modal?.type === 'undo_payment'} size="sm" onClose={close} title="Undo this payment">
         {modal?.type === 'undo_payment' && <ReasonForm label="Why?" danger button="Undo payment" note="It stays on record as reversed." onSubmit={(reason) => api.post(`/finance/receipts/${modal.receipt.id}/reverse`, { reason }).then(() => done('Payment undone'))} />}

@@ -95,6 +95,7 @@ let list = await tracked('pending');
 log(list.rows.some((r) => r.id === quotationId && r.tracking === 'pending') && typeof list.tracking.pending === 'number', 'an unsent quotation is tracked as pending');
 [deal] = await dealOf();
 log(deal.stage === 'quotation' && deal.quotation.tracking === 'pending', 'the pipeline moves to the Quotation step');
+log(deal.quotation.revision_id === revisionId, "the deal carries its quotation version, for the board's Approved and Create order steps");
 const issued = await exec.post(`/quote-revisions/${revisionId}/issue`, { sent_at: new Date().toISOString(), channel: 'email', summary: 'Quotation emailed to Meera', validity_date: addDays(20), next: { purpose: 'Follow up quotation', owner_id: exec.user.id, due_date: addDays(3) } });
 log(issued.status === 200 || issued.status === 201, 'quotation sent', issued.data?.error);
 log((await tracked('sent')).rows.some((r) => r.id === quotationId && r.tracking === 'sent'), 'a sent quotation is tracked as sent');
