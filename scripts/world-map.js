@@ -1,10 +1,12 @@
-// Builds client/src/data/world-map.json, the outline map behind the dashboard's "Where enquiries and sales come
-// from" card. Country shapes are Natural Earth 1:110m (public domain), from the world-atlas npm package, drawn
-// once here in the Natural Earth projection so the app needs no mapping library.
+// Builds client/src/data/world-map.json, the map behind the dashboard's "Where enquiries and sales come from"
+// card. Country shapes are Natural Earth (public domain), from the world-atlas npm package, drawn once here in the
+// Natural Earth projection so the app needs no mapping library: 1:110m for the world, and 1:50m for the CRM's
+// countries too small to appear at that scale (Bahrain, Singapore), so that every CRM country can be shaded.
+// Points keep a tenth of a map unit, enough to stay smooth when the map is zoomed in.
 //
 // Run it again when a country is added to COUNTRIES in shared/constants.js:
 //   npm pack world-atlas@2.0.2 --pack-destination <empty folder>   (then unpack the .tgz there)
-//   node scripts/world-map.js <that folder>/package/countries-110m.json
+//   node scripts/world-map.js <that folder>/package
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,28 +24,15 @@ const SHAPES = {
   BD: ['050', 'Bangladesh'], LK: ['144', 'Sri Lanka'], NP: ['524', 'Nepal'], SG: ['702', 'Singapore'], MY: ['458', 'Malaysia'], GB: ['826', 'United Kingdom'],
   US: ['840', 'United States of America'], DE: ['276', 'Germany'],
 };
-// Where a country's circle goes when its shape is too small for this scale (Bahrain, Singapore), or when its
-// largest shape is not where its business is (Malaysia's is Borneo; Kuala Lumpur is on the peninsula). [lon, lat]
-const PLACES = { BH: [50.55, 26.07], SG: [103.82, 1.35], MY: [101.69, 3.14] };
+// Where a country's name goes when its largest piece is not where its business is: Malaysia's is Borneo, and Kuala
+// Lumpur is on the peninsula. [lon, lat]
+const PLACES = { MY: [101.69, 3.14] };
 
-const src = process.argv[2];
-if (!src) throw new Error('Usage: node scripts/world-map.js <path to countries-110m.json>');
-const topo = JSON.parse(fs.readFileSync(src, 'utf8'));
+const dir = process.argv[2];
+if (!dir) throw new Error('Usage: node scripts/world-map.js <unpacked world-atlas package folder>');
 for (const c of COUNTRIES) if (!SHAPES[c.value]) throw new Error(`${c.value} (${c.label}) is not in SHAPES: add its ISO numeric code and Natural Earth name`);
 
-// ------------------------------------------------------------------ TopoJSON to rings of [lon, lat]
-const { scale: [kx, ky], translate: [tx, ty] } = topo.transform;
-const arcs = topo.arcs.map((arc) => {
-  let x = 0;
-  let y = 0;
-  return arc.map(([dx, dy]) => {
-    x += dx;
-    y += dy;
-    return [x * kx + tx, y * ky + ty];
-  });
-});
-const arcPoints = (i) => (i < 0 ? arcs[~i].slice().reverse() : arcs[i]);
-const ring = (indexes) => indexes.flatMap((i, k) => (k ? arcPoints(i).slice(1) : arcPoints(i)));
+// ------------------------------------------------------------------ TopoJSON to polygons of [lon, lat]
 const crossesDateLine = (r) => r.some((p, i) => i > 0 && Math.abs(p[0] - r[i - 1][0]) > 180);
 /**
  * A shape across the 180° line (Fiji, the tip of Russia) would be drawn as a band across the whole map. Its
@@ -62,8 +51,29 @@ function splitAtDateLine(r) {
   const held = (shift) => flat.map(([lon, lat]) => [Math.max(-180, Math.min(180, lon + shift)), lat]);
   return [held(0), ...(Math.max(...lons) > 180 ? [held(-360)] : []), ...(Math.min(...lons) < -180 ? [held(360)] : [])];
 }
-const fixDateLine = (polygons) => polygons.flatMap((poly) => (poly.some(crossesDateLine) ? splitAtDateLine(poly[0]).map((piece) => [piece]) : [poly]));
-const polygonsOf = (g) => fixDateLine(g.type === 'Polygon' ? [g.arcs.map(ring)] : g.type === 'MultiPolygon' ? g.arcs.map((p) => p.map(ring)) : []);
+
+/** Every country in a world-atlas file, Antarctica left out, as { id, name, polygons }. */
+function shapesIn(file) {
+  const topo = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+  const { scale: [kx, ky], translate: [tx, ty] } = topo.transform;
+  const arcs = topo.arcs.map((arc) => {
+    let x = 0;
+    let y = 0;
+    return arc.map(([dx, dy]) => {
+      x += dx;
+      y += dy;
+      return [x * kx + tx, y * ky + ty];
+    });
+  });
+  const arcPoints = (i) => (i < 0 ? arcs[~i].slice().reverse() : arcs[i]);
+  const ring = (indexes) => indexes.flatMap((i, k) => (k ? arcPoints(i).slice(1) : arcPoints(i)));
+  const fixDateLine = (polygons) => polygons.flatMap((poly) => (poly.some(crossesDateLine) ? splitAtDateLine(poly[0]).map((piece) => [piece]) : [poly]));
+  return topo.objects.countries.geometries.filter((g) => g.properties?.name !== 'Antarctica').map((g) => ({
+    id: g.id,
+    name: g.properties?.name,
+    polygons: fixDateLine(g.type === 'Polygon' ? [g.arcs.map(ring)] : g.type === 'MultiPolygon' ? g.arcs.map((p) => p.map(ring)) : []),
+  }));
+}
 
 // ------------------------------------------------------------------ Natural Earth projection (as d3-geo's naturalEarth1)
 const RAD = Math.PI / 180;
@@ -78,23 +88,16 @@ function project([lon, lat]) {
   ];
 }
 
-const geometries = topo.objects.countries.geometries.filter((g) => g.properties?.name !== 'Antarctica');
-const shapes = geometries.map((g) => ({ id: g.id, name: g.properties?.name, polygons: polygonsOf(g) }));
-for (const s of shapes) {
-  for (const poly of s.polygons) {
-    for (const r of poly) {
-      for (let i = 1; i < r.length; i++) if (Math.abs(r[i][0] - r[i - 1][0]) > 180) throw new Error(`${s.name} crosses the date line; split it before drawing`);
-    }
-  }
-}
-
+const world = shapesIn('countries-110m.json');
+const detailed = shapesIn('countries-50m.json');
 let minX = Infinity;
 let maxX = -Infinity;
 let minY = Infinity;
 let maxY = -Infinity;
-for (const s of shapes) {
+for (const s of world) {
   for (const poly of s.polygons) {
     for (const r of poly) {
+      if (crossesDateLine(r)) throw new Error(`${s.name} still crosses the date line`);
       for (const pt of r) {
         const [x, y] = project(pt);
         minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y);
@@ -109,20 +112,26 @@ const toScreen = (pt) => {
   return [(x - minX) * S + PAD, (maxY - y) * S + PAD];
 };
 
-/** An SVG path in whole units: absolute start, relative steps, rings too small to see left out. */
+// Points in tenths of a unit: '.4' and '-1.2' are valid SVG numbers.
+const tenths = (v) => {
+  const s = (Math.abs(v) / 10).toFixed(v % 10 === 0 ? 0 : 1).replace(/^0\./, '.');
+  return v < 0 ? `-${s}` : s;
+};
+
+/** An SVG path: absolute start, relative steps in tenths of a unit, rings too small to see left out. */
 function pathOf(polygons) {
   let d = '';
   for (const poly of polygons) {
     for (const r of poly) {
       const pts = [];
       for (const pt of r) {
-        const [x, y] = toScreen(pt).map(Math.round);
+        const [x, y] = toScreen(pt).map((v) => Math.round(v * 10));
         const last = pts[pts.length - 1];
         if (!last || last[0] !== x || last[1] !== y) pts.push([x, y]);
       }
       if (pts.length > 1 && pts[0][0] === pts[pts.length - 1][0] && pts[0][1] === pts[pts.length - 1][1]) pts.pop();
       if (pts.length < 3) continue;
-      d += `M${pts[0][0]},${pts[0][1]}l${pts.slice(1).map((p, i) => `${p[0] - pts[i][0]},${p[1] - pts[i][1]}`).join(' ')}z`;
+      d += `M${tenths(pts[0][0])},${tenths(pts[0][1])}l${pts.slice(1).map((p, i) => `${tenths(p[0] - pts[i][0])},${tenths(p[1] - pts[i][1])}`).join(' ').replace(/ -/g, '-')}z`;
     }
   }
   return d;
@@ -144,22 +153,31 @@ function anchorOf(polygons) {
     }
     if (a && (!best || Math.abs(a) > best.area)) best = { area: Math.abs(a), x: cx / (3 * a), y: cy / (3 * a) };
   }
-  return best;
+  return [best.x, best.y];
 }
 
+/** The box around all of a country, on screen: [left, top, right, bottom]. */
+function boxOf(polygons) {
+  const pts = polygons.flatMap((poly) => poly[0].map(toScreen));
+  const xs = pts.map((p) => p[0]);
+  const ys = pts.map((p) => p[1]);
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)].map((v) => Math.round(v * 10) / 10);
+}
+
+const round1 = (v) => Math.round(v * 10) / 10;
 const countries = {};
 const used = new Set();
 for (const [code, [id, name]] of Object.entries(SHAPES)) {
-  const shape = shapes.find((s) => s.id === id);
-  if (shape && shape.name !== name) throw new Error(`${code}: id ${id} is "${shape.name}" in the data, not "${name}"`);
-  if (!shape && !PLACES[code]) throw new Error(`${code} (${name}) has no shape at this scale: add it to PLACES`);
-  const at = PLACES[code] ? toScreen(PLACES[code]) : (({ x, y }) => [x, y])(anchorOf(shape.polygons));
-  countries[code] = { x: Math.round(at[0] * 10) / 10, y: Math.round(at[1] * 10) / 10, ...(shape ? { d: pathOf(shape.polygons) } : {}) };
-  if (shape) used.add(shape);
+  const shape = world.find((s) => s.id === id) || detailed.find((s) => s.id === id);
+  if (!shape) throw new Error(`${code} (${name}) is in neither the 1:110m nor the 1:50m data`);
+  if (shape.name !== name) throw new Error(`${code}: id ${id} is "${shape.name}" in the data, not "${name}"`);
+  const [x, y] = PLACES[code] ? toScreen(PLACES[code]) : anchorOf(shape.polygons);
+  countries[code] = { x: round1(x), y: round1(y), box: boxOf(shape.polygons), d: pathOf(shape.polygons) };
+  used.add(shape.id);
 }
-const land = pathOf(shapes.filter((s) => !used.has(s)).flatMap((s) => s.polygons));
+const land = pathOf(world.filter((s) => !used.has(s.id)).flatMap((s) => s.polygons));
 const out = {
-  source: 'Country shapes: Natural Earth 1:110m (public domain), via the world-atlas package 2.0.2, in the Natural Earth projection. Antarctica is left out. Made by scripts/world-map.js.',
+  source: 'Country shapes: Natural Earth 1:110m, and 1:50m for Bahrain and Singapore (public domain), via the world-atlas package 2.0.2, in the Natural Earth projection. Antarctica is left out. Made by scripts/world-map.js.',
   width: WIDTH,
   height: HEIGHT,
   land,
@@ -168,4 +186,4 @@ const out = {
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
 fs.writeFileSync(OUT, `${JSON.stringify(out)}\n`);
 console.log(`${path.relative(root, OUT)}: ${WIDTH}×${HEIGHT}, ${Object.keys(countries).length} countries, ${(fs.statSync(OUT).size / 1024).toFixed(1)} KB`);
-for (const [code, c] of Object.entries(countries)) console.log(`  ${code} at ${c.x},${c.y}${c.d ? ` · outline ${c.d.length} chars` : ' · placed by coordinates'}`);
+for (const [code, c] of Object.entries(countries)) console.log(`  ${code} at ${c.x},${c.y} · box ${c.box.join(',')} · outline ${c.d.length} chars`);

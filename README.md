@@ -11,7 +11,7 @@ Customer → Enquiry → Quotation → Order → Payment → Production → Disp
 
 | Page | What it does |
 |---|---|
-| **Dashboard** | Enquiries today, not replied, pending quotations, active orders, production and delays; daily enquiries; a world map of this financial year's enquiries and sales by country (India also by state); follow-ups due and delayed orders |
+| **Dashboard** | Enquiries today, not replied, pending quotations, active orders, production and delays; daily enquiries; a zoomable world map shading each country by this financial year's enquiries or sales (India also by state); follow-ups due and delayed orders |
 | **Follow-ups** | Everyone's next actions: overdue, today, upcoming. Record what happened and set the next one in the same step |
 | **Customers** | A short new-customer form; one page per customer with its enquiries, quotations, orders, exhibitions visited, history, contacts and details |
 | **Enquiries** | Added against a customer: products, source, notes, reply status, follow-ups and who it is assigned to. A list, and a drag-and-drop board |
@@ -92,7 +92,7 @@ server/            Express 5 API
   setup.js         The clean installation created on first start (regions, product models, first administrator)
 shared/            Constants, permissions, dates and rules used by both server and client
 scripts/           dev runner, backup / restore test, restore, world-map.js (makes client/src/data/world-map.json
-                   from Natural Earth country outlines, public domain; run it again when a country is added)
+                   from Natural Earth country shapes, public domain; run it again when a country is added)
 tests/             Test suites and their sample data (sample-data.mjs) — never deployed or loaded by the app
 docs/              Delivery pack (setup, configuration, permissions, imports, backup, guides)
 ```

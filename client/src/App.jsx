@@ -1,5 +1,6 @@
 import { lazy, Suspense } from 'react';
-import { createBrowserRouter, Navigate, Outlet, RouterProvider, useLocation } from 'react-router-dom';
+import { createBrowserRouter, Navigate, Outlet, RouterProvider, useLocation, useRouteError } from 'react-router-dom';
+import { isMissingUpdate, loadFresh } from './lib/update.js';
 import { AuthProvider, useAuth } from './auth.jsx';
 import { ConfirmProvider, Spinner, ToastProvider, EmptyState, Button } from './components/ui.jsx';
 import { MetaProvider, useMeta } from './components/domain.jsx';
@@ -7,42 +8,42 @@ import { QuickEntryProvider } from './components/QuickEntry.jsx';
 import Layout from './components/Layout.jsx';
 import Login from './pages/Login.jsx';
 
-const Overview = lazy(() => import('./pages/Overview.jsx'));
-const WorkQueue = lazy(() => import('./pages/WorkQueue.jsx'));
-const Followups = lazy(() => import('./pages/Followups.jsx'));
-const Dashboard = lazy(() => import('./pages/Dashboard.jsx'));
-const Pipeline = lazy(() => import('./pages/Pipeline.jsx'));
-const PastCustomers = lazy(() => import('./pages/PastCustomers.jsx'));
-const Enquiries = lazy(() => import('./pages/Enquiries.jsx'));
-const EnquiryDetail = lazy(() => import('./pages/EnquiryDetail.jsx'));
-const Quotations = lazy(() => import('./pages/Quotations.jsx'));
-const QuotationBuilder = lazy(() => import('./pages/QuotationBuilder.jsx'));
-const QuotationDetail = lazy(() => import('./pages/QuotationDetail.jsx'));
-const Orders = lazy(() => import('./pages/Orders.jsx'));
-const OrderDetail = lazy(() => import('./pages/OrderDetail.jsx'));
-const NewOrder = lazy(() => import('./pages/NewOrder.jsx'));
-const Production = lazy(() => import('./pages/Production.jsx'));
-const Dispatches = lazy(() => import('./pages/Dispatches.jsx'));
-const Customers = lazy(() => import('./pages/Customers.jsx'));
-const CustomerProfile = lazy(() => import('./pages/CustomerProfile.jsx'));
-const Contacts = lazy(() => import('./pages/Contacts.jsx'));
-const Campaigns = lazy(() => import('./pages/Campaigns.jsx'));
-const CampaignDetail = lazy(() => import('./pages/CampaignDetail.jsx'));
-const Products = lazy(() => import('./pages/Products.jsx'));
-const ProductDetail = lazy(() => import('./pages/Products.jsx').then((m) => ({ default: m.ProductDetailPage })));
-const Objects = lazy(() => import('./pages/Objects.jsx'));
-const ObjectDetail = lazy(() => import('./pages/ObjectDetail.jsx'));
-const ObjectLabels = lazy(() => import('./pages/ObjectLabels.jsx'));
-const Reports = lazy(() => import('./pages/Reports.jsx'));
-const Payments = lazy(() => import('./pages/Payments.jsx'));
-const Complaints = lazy(() => import('./pages/Complaints.jsx'));
-const ComplaintDetail = lazy(() => import('./pages/ComplaintDetail.jsx'));
-const Team = lazy(() => import('./pages/Team.jsx'));
-const Settings = lazy(() => import('./pages/Settings.jsx'));
-const Account = lazy(() => import('./pages/Account.jsx'));
-const ScanPage = lazy(() => import('./pages/ScanPage.jsx'));
-const QuotePortal = lazy(() => import('./pages/Portal.jsx').then((m) => ({ default: m.QuotePortal })));
-const OrderPortal = lazy(() => import('./pages/Portal.jsx').then((m) => ({ default: m.OrderPortal })));
+const Overview = lazy(loadFresh(() => import('./pages/Overview.jsx')));
+const WorkQueue = lazy(loadFresh(() => import('./pages/WorkQueue.jsx')));
+const Followups = lazy(loadFresh(() => import('./pages/Followups.jsx')));
+const Dashboard = lazy(loadFresh(() => import('./pages/Dashboard.jsx')));
+const Pipeline = lazy(loadFresh(() => import('./pages/Pipeline.jsx')));
+const PastCustomers = lazy(loadFresh(() => import('./pages/PastCustomers.jsx')));
+const Enquiries = lazy(loadFresh(() => import('./pages/Enquiries.jsx')));
+const EnquiryDetail = lazy(loadFresh(() => import('./pages/EnquiryDetail.jsx')));
+const Quotations = lazy(loadFresh(() => import('./pages/Quotations.jsx')));
+const QuotationBuilder = lazy(loadFresh(() => import('./pages/QuotationBuilder.jsx')));
+const QuotationDetail = lazy(loadFresh(() => import('./pages/QuotationDetail.jsx')));
+const Orders = lazy(loadFresh(() => import('./pages/Orders.jsx')));
+const OrderDetail = lazy(loadFresh(() => import('./pages/OrderDetail.jsx')));
+const NewOrder = lazy(loadFresh(() => import('./pages/NewOrder.jsx')));
+const Production = lazy(loadFresh(() => import('./pages/Production.jsx')));
+const Dispatches = lazy(loadFresh(() => import('./pages/Dispatches.jsx')));
+const Customers = lazy(loadFresh(() => import('./pages/Customers.jsx')));
+const CustomerProfile = lazy(loadFresh(() => import('./pages/CustomerProfile.jsx')));
+const Contacts = lazy(loadFresh(() => import('./pages/Contacts.jsx')));
+const Campaigns = lazy(loadFresh(() => import('./pages/Campaigns.jsx')));
+const CampaignDetail = lazy(loadFresh(() => import('./pages/CampaignDetail.jsx')));
+const Products = lazy(loadFresh(() => import('./pages/Products.jsx')));
+const ProductDetail = lazy(loadFresh(() => import('./pages/Products.jsx').then((m) => ({ default: m.ProductDetailPage }))));
+const Objects = lazy(loadFresh(() => import('./pages/Objects.jsx')));
+const ObjectDetail = lazy(loadFresh(() => import('./pages/ObjectDetail.jsx')));
+const ObjectLabels = lazy(loadFresh(() => import('./pages/ObjectLabels.jsx')));
+const Reports = lazy(loadFresh(() => import('./pages/Reports.jsx')));
+const Payments = lazy(loadFresh(() => import('./pages/Payments.jsx')));
+const Complaints = lazy(loadFresh(() => import('./pages/Complaints.jsx')));
+const ComplaintDetail = lazy(loadFresh(() => import('./pages/ComplaintDetail.jsx')));
+const Team = lazy(loadFresh(() => import('./pages/Team.jsx')));
+const Settings = lazy(loadFresh(() => import('./pages/Settings.jsx')));
+const Account = lazy(loadFresh(() => import('./pages/Account.jsx')));
+const ScanPage = lazy(loadFresh(() => import('./pages/ScanPage.jsx')));
+const QuotePortal = lazy(loadFresh(() => import('./pages/Portal.jsx').then((m) => ({ default: m.QuotePortal }))));
+const OrderPortal = lazy(loadFresh(() => import('./pages/Portal.jsx').then((m) => ({ default: m.OrderPortal }))));
 
 function Guard({ perm, module, children }) {
   const { can } = useAuth();
@@ -90,11 +91,25 @@ function PublicShell() {
   );
 }
 
+/** Shown instead of a page that failed: after an update, or any other error. */
+function PageError() {
+  const error = useRouteError();
+  const update = isMissingUpdate(error);
+  return (
+    <div className="error-page">
+      <EmptyState icon="refresh" title={update ? 'The CRM has been updated' : 'Something went wrong on this page'}
+        message={update ? 'Reload the page to get the new version.' : 'Reload the page to try again. If it happens again, tell your administrator what you were doing.'}
+        action={<div className="row"><Button variant="primary" icon="refresh" onClick={() => window.location.reload()}>Reload</Button><Button onClick={() => window.location.assign('/')}>Dashboard</Button></div>} />
+    </div>
+  );
+}
+
 const g = (perm, el, module) => <Guard perm={perm} module={module}>{el}</Guard>;
 const router = createBrowserRouter([
-  { path: '/login', element: <LoginRoute /> },
+  { path: '/login', element: <LoginRoute />, errorElement: <PageError /> },
   {
     element: <PublicShell />,
+    errorElement: <PageError />,
     children: [
       { path: '/o/:publicId', element: <ScanPage /> },
       { path: '/portal/quote/:token', element: <QuotePortal /> },
@@ -104,6 +119,7 @@ const router = createBrowserRouter([
   {
     path: '/',
     element: <PrivateShell />,
+    errorElement: <PageError />,
     children: [
       { index: true, element: g('dashboard.view', <Overview />) },
       { path: 'queue', element: g('queue.view', <WorkQueue />, 'workQueue') },

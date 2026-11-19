@@ -278,7 +278,7 @@ log(world.totals.enquiries === world.countries.reduce((n, c) => n + c.enquiries,
 const shop = await mapOf(production);
 log(shop.totals.enquiries === 0 && shop.countries.every((c) => !('value_by_currency' in c)), 'production sees no enquiries and no values on the map');
 const outline = JSON.parse(fs.readFileSync(new URL('../client/src/data/world-map.json', import.meta.url), 'utf8'));
-log(COUNTRIES.every((c) => Number.isFinite(outline.countries[c.value]?.x) && Number.isFinite(outline.countries[c.value]?.y)), 'every country a customer can have has a place on the world map');
+log(COUNTRIES.every((c) => outline.countries[c.value]?.d?.startsWith('M') && outline.countries[c.value].box?.length === 4), 'every country a customer can have has a shape on the world map, to shade and zoom to');
 
 console.log(failures ? `\n${failures} OF ${checks} FLOW CHECKS FAILED` : `\nALL ${checks} FLOW CHECKS PASSED`);
 process.exit(failures ? 1 : 0);
